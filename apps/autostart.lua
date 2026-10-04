@@ -4,8 +4,13 @@
 local autostart = require("autostart")
 local log = require("lib.log")
 
-local SPEC_PATH = (os.getenv("HOME") or ".") .. "/proyectos/lane/autostart.lua"
-local PROJECT   = (os.getenv("HOME") or ".") .. "/proyectos/lane"
+-- Rutas relativas al CWD. lane-session hace `cd $PROJECT` antes
+-- de invocar este script, asi que el CWD siempre es la raiz del
+-- proyecto (working copy o /opt/lane). Hardcodear $HOME rompia la
+-- instalacion de sistema: los daemons arrancaban desde el working
+-- copy aunque lane-session fuera de /opt.
+local SPEC_PATH = "./autostart.lua"
+local PROJECT   = "."
 
 local ok, spec = pcall(dofile, SPEC_PATH)
 if not ok or type(spec) ~= "table" then
