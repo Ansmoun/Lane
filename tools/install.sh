@@ -172,6 +172,33 @@ else
     exit 1
 fi
 
+# --- .desktop para login managers ---
+echo "==> Instalando .desktop para login managers"
+XSESSION_DIR="/usr/share/xsessions"
+DESKTOP_SRC="$DST/tools/LANE.desktop"
+DESKTOP_DST="$XSESSION_DIR/LANE.desktop"
+if [ -f "$DESKTOP_SRC" ]; then
+    mkdir -p "$XSESSION_DIR"
+    sed "s|@LANE_SESSION@|$DST/bin/lane-session|g" \
+        "$DESKTOP_SRC" > "$DESKTOP_DST"
+    chmod 0644 "$DESKTOP_DST"
+    echo "    OK      $DESKTOP_DST"
+    echo "            Exec=$DST/bin/lane-session"
+else
+    echo "    AVISO   $DESKTOP_SRC no existe, se omite"
+fi
+
+# Avisar si hay un .desktop duplicado en user-local, que podria
+# tomar prioridad sobre el sistema en algunos DMs.
+USER_DESKTOP="${REAL_HOME}/.local/share/xsessions/LANE.desktop"
+if [ -f "$USER_DESKTOP" ]; then
+    echo "    AVISO   existe $USER_DESKTOP (user-local)"
+    echo "            puede tener prioridad sobre el del sistema;"
+    echo "            borralo con: rm $USER_DESKTOP"
+fi
+echo
+
 echo
 echo "==> Instalación completa."
 echo "    LANE en $DST"
+echo "    .desktop en $DESKTOP_DST"

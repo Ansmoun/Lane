@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=LANE
+Comment=Layered Agnostic Native Environment
+Exec=@LANE_SESSION@
+Type=Application
+DesktopNames=LANE
