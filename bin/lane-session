@@ -48,8 +48,32 @@ echo "--- ejecutando autostart ---"
 ./run apps/autostart.lua
 echo "autostart exit=$?"
 
-# Elegir WM
-if [ -f "$WM_CONF" ]; then
+# Elegir WM, en orden de prioridad:
+#   1. /tmp/lane-wm-choice -- lo escribe el greeter antes de autenticar
+#   2. ~/.config/lane/wm  -- persistente
+#   3. default: bspwm
+#
+# Caso especial: si el id elegido es "LANE", significa que el
+# usuario eligio la entrada LANE del greeter (nuestro .desktop en
+# ~/.local/share/xsessions/). En ese caso no hay que exec "LANE":
+# se usa el WM persistido en ~/.config/lane/wm.
+TMP_WM="/tmp/lane-wm-choice"
+if [ -f "$TMP_WM" ]; then
+    WM=$(head -1 "$TMP_WM" | tr -d '[:space:]')
+    rm -f "$TMP_WM"
+    if [ "$WM" = "LANE" ]; then
+        echo "greeter eligio LANE, usando WM persistido"
+        if [ -f "$WM_CONF" ]; then
+            WM=$(head -1 "$WM_CONF" | tr -d '[:space:]')
+        else
+            WM="bspwm"
+        fi
+    else
+        mkdir -p "$(dirname "$WM_CONF")"
+        echo "$WM" > "$WM_CONF"
+        echo "WM elegido por greeter: $WM (persistido en $WM_CONF)"
+    fi
+elif [ -f "$WM_CONF" ]; then
     WM=$(head -1 "$WM_CONF" | tr -d '[:space:]')
 fi
 [ -z "$WM" ] && WM="bspwm"
