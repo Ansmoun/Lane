@@ -13,8 +13,15 @@
 cd "$(dirname "$0")"
 LANE="$(pwd)"
 
+# Prioridad de LaneTK:
+#   1. $LANETK_DIR (override manual)
+#   2. Si LANE vive en /opt/lane/, usar /opt/lanetk/ (producción)
+#   3. ~/proyectos/lanetk (working copy, desarrollo)
+#   4. /opt/lanetk (fallback)
 if [ -n "$LANETK_DIR" ] && [ -d "$LANETK_DIR/src/lib" ]; then
     TK="$LANETK_DIR"
+elif [ "$LANE" = "/opt/lane" ] && [ -d "/opt/lanetk/src/lib" ]; then
+    TK="/opt/lanetk"
 elif [ -d "$HOME/proyectos/lanetk/src/lib" ]; then
     TK="$HOME/proyectos/lanetk"
 elif [ -d "/opt/lanetk/src/lib" ]; then
