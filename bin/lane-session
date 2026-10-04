@@ -1,0 +1,53 @@
+#!/bin/sh
+# bin/lane-session: wrapper de sesión de LANE.
+# Uso: startx              (lee ~/.xinitrc que invoca este script)
+#      startx /ruta/al/bin/lane-session
+
+PROJECT="/home/ansmoun/proyectos/lane"
+WM_CONF="$HOME/.config/lane/wm"
+LOG="/tmp/lane-session.log"
+
+# Todo lo que pase aqui queda en $LOG para depurar.
+exec >"$LOG" 2>&1
+echo "=== lane-session $(date) ==="
+echo "PROJECT=$PROJECT"
+echo "DISPLAY=$DISPLAY"
+echo "DBUS=$DBUS_SESSION_BUS_ADDRESS"
+
+# Limpieza de huerfanos (heredado de .xinitrc)
+pkill -9 -x terminology 2>/dev/null
+pkill -9 -x scrcpy 2>/dev/null
+
+# D-Bus: sin esto apps que dependen de el entran en bucle
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -S "/run/user/$(id -u)/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+    echo "DBUS exportado: $DBUS_SESSION_BUS_ADDRESS"
+fi
+
+# Autostart del toolkit. NO usa set -e: si falla, seguimos al WM.
+# Configurar monitores ANTES del autostart. Inline para no pagar
+# los sleeps del script externo (los sleeps son para hotplug, no
+# para el arranque inicial). wait_x ya garantizo que X responde.
+echo "--- xrandr ---"
+if xrandr --query | grep -q "^VGA-1 connected"; then
+    xrandr --output VGA-1  --mode 1024x768 --rate 75.03 --pos 0x0 \
+           --output LVDS-1 --mode 1024x600             --pos 0x768
+else
+    xrandr --output VGA-1  --off \
+           --output LVDS-1 --mode 1024x600 --pos 0x0
+fi
+echo "xrandr exit=$?"
+xrandr --query | grep connected
+
+cd "$PROJECT" || { echo "cd $PROJECT fallo"; exit 1; }
+echo "--- ejecutando autostart ---"
+./run apps/autostart.lua
+echo "autostart exit=$?"
+
+# Elegir WM
+if [ -f "$WM_CONF" ]; then
+    WM=$(head -1 "$WM_CONF" | tr -d '[:space:]')
+fi
+[ -z "$WM" ] && WM="bspwm"
+echo "--- exec $WM ---"
+exec "$WM"

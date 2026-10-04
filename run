@@ -1,0 +1,33 @@
+#!/bin/sh
+# run: entry point de LANE.
+#
+# Resuelve LUA_PATH con dos raíces:
+#   - LANE/src              (módulos del entorno: bar, tabs, app, etc.)
+#   - LaneTK (src y bindings) (toolkit: widgets, helpers, bindings FFI)
+#
+# LaneTK se busca en orden:
+#   1. $LANETK_DIR          (override manual)
+#   2. ~/proyectos/lanetk   (working copy, gana en desarrollo)
+#   3. /opt/lanetk          (instalación de sistema)
+
+cd "$(dirname "$0")"
+LANE="$(pwd)"
+
+if [ -n "$LANETK_DIR" ] && [ -d "$LANETK_DIR/src/lib" ]; then
+    TK="$LANETK_DIR"
+elif [ -d "$HOME/proyectos/lanetk/src/lib" ]; then
+    TK="$HOME/proyectos/lanetk"
+elif [ -d "/opt/lanetk/src/lib" ]; then
+    TK="/opt/lanetk"
+else
+    echo "run: no se encuentra LaneTK" >&2
+    echo "     definí LANETK_DIR, o cloná LaneTK en ~/proyectos/lanetk," >&2
+    echo "     o instalalo en /opt/lanetk" >&2
+    exit 1
+fi
+
+echo "run: LaneTK = $TK" >&2
+
+export LUA_PATH="$LANE/src/?.lua;$LANE/src/?/init.lua;$TK/?.lua;$TK/src/?.lua;$TK/src/?/init.lua;;"
+
+exec luajit "$@"

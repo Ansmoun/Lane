@@ -1,0 +1,11 @@
+# Backups y temporales
+*.bak
+*.bak-*
+*.bak.*
+*.orig
+*.swp
+*.tmp
+.DS_Store
+
+# Snapshots
+.backups/
