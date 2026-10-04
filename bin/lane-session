@@ -3,7 +3,11 @@
 # Uso: startx              (lee ~/.xinitrc que invoca este script)
 #      startx /ruta/al/bin/lane-session
 
-PROJECT="/home/ansmoun/proyectos/lane"
+# Detectar la raiz del proyecto a partir de la ubicacion del script.
+# Funciona tanto en desarrollo (~/proyectos/lane/bin/) como en
+# produccion (/opt/lane/bin/).
+SELF="$(readlink -f "$0")"
+PROJECT="$(dirname "$(dirname "$SELF")")"
 WM_CONF="$HOME/.config/lane/wm"
 LOG="/tmp/lane-session.log"
 
