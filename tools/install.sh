@@ -1,22 +1,26 @@
 #!/bin/sh
-# install.sh: instala LANE y su dependencia LaneTK en /opt/.
+# install.sh: instala LANE, su dependencia LaneTK y los proyectos
+# satélite del ecosistema en /opt/.
 #
 # Uso:
 #   cd ~/proyectos/lane
-#   sudo tools/install.sh [-y] [--install-deps]
+#   sudo tools/install.sh [-y] [--install-deps] [--no-satellites]
 #
 # -y, --yes            no pedir confirmación
 #     --install-deps   instalar dependencias faltantes (solo Void Linux)
+#     --no-satellites  no instalar los proyectos satélite
 
 set -e
 
 AUTO_YES=0
 INSTALL_DEPS=0
+INSTALL_SATS=1
 while [ $# -gt 0 ]; do
     case "$1" in
         -y|--yes)          AUTO_YES=1 ;;
         --install-deps)    INSTALL_DEPS=1 ;;
-        -h|--help)         sed -n '2,10p' "$0"; exit 0 ;;
+        --no-satellites)   INSTALL_SATS=0 ;;
+        -h|--help)         sed -n '2,12p' "$0"; exit 0 ;;
         *)                 echo "Argumento desconocido: $1" >&2; exit 1 ;;
     esac
     shift
@@ -47,24 +51,16 @@ has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 MISSING=""
 need_cmd() {
-    if has_cmd "$1"; then
-        echo "    OK      $1"
-    else
-        echo "    FALTA   $1"
-        MISSING="$MISSING $1"
-    fi
+    if has_cmd "$1"; then echo "    OK      $1"
+    else echo "    FALTA   $1"; MISSING="$MISSING $1"; fi
 }
 need_one_of() {
     local present=""
     for c in "$@"; do
         if has_cmd "$c"; then present="$c"; break; fi
     done
-    if [ -n "$present" ]; then
-        echo "    OK      $present (alternativas: $*)"
-    else
-        echo "    FALTA   una de: $*"
-        MISSING="$MISSING $1"
-    fi
+    if [ -n "$present" ]; then echo "    OK      $present (alternativas: $*)"
+    else echo "    FALTA   una de: $*"; MISSING="$MISSING $1"; fi
 }
 
 echo "==> LANE — instalación en $DST"
@@ -114,8 +110,7 @@ if [ -n "$MISSING" ]; then
     if is_void; then
         echo "    Paquetes sugeridos para Void:"
         echo "      xbps-install -S scrot xdotool xwininfo slop ffmpeg \\"
-        echo "                     xrandr xmodmap xclip xdg-utils fd \\"
-        echo "                     elogind"
+        echo "                     xrandr xmodmap xclip xdg-utils fd elogind"
         echo
         if [ "$INSTALL_DEPS" -eq 1 ]; then
             echo "==> Instalando dependencias (--install-deps activo)"
@@ -138,10 +133,7 @@ echo
 if [ -d "$DST" ] && [ "$AUTO_YES" -eq 0 ]; then
     printf "==> Se va a reemplazar $DST. Continuar? [y/N] "
     read -r ans
-    case "$ans" in
-        y|Y|yes|YES) ;;
-        *) echo "Cancelado."; exit 0 ;;
-    esac
+    case "$ans" in y|Y|yes|YES) ;; *) echo "Cancelado."; exit 0 ;; esac
 fi
 
 echo "==> Copiando LANE"
@@ -163,7 +155,6 @@ cd "$DST"
 if ./run -e '
     require("lib.server")
     require("lib.app")
-    require("bar.engine")
     print("requires OK")
 ' 2>&1; then
     echo "    OK"
@@ -183,22 +174,38 @@ if [ -f "$DESKTOP_SRC" ]; then
         "$DESKTOP_SRC" > "$DESKTOP_DST"
     chmod 0644 "$DESKTOP_DST"
     echo "    OK      $DESKTOP_DST"
-    echo "            Exec=$DST/bin/lane-session"
-else
-    echo "    AVISO   $DESKTOP_SRC no existe, se omite"
 fi
 
-# Avisar si hay un .desktop duplicado en user-local, que podria
-# tomar prioridad sobre el sistema en algunos DMs.
 USER_DESKTOP="${REAL_HOME}/.local/share/xsessions/LANE.desktop"
 if [ -f "$USER_DESKTOP" ]; then
     echo "    AVISO   existe $USER_DESKTOP (user-local)"
-    echo "            puede tener prioridad sobre el del sistema;"
-    echo "            borralo con: rm $USER_DESKTOP"
 fi
 echo
+
+# --- Satélites ---
+if [ "$INSTALL_SATS" -eq 1 ]; then
+    echo "==> Instalando proyectos satélite"
+    SATS="lane-bar lane-launcher lane-files lane-sysmon lane-network \
+          lane-disks lane-procs lane-search lane-battery"
+    for s in $SATS; do
+        sat_src="${REAL_HOME}/proyectos/$s"
+        sat_installer="$sat_src/tools/install.sh"
+        if [ -d "$sat_src" ] && [ -x "$sat_installer" ]; then
+            echo "--- $s ---"
+            "$sat_installer" -y 2>&1 | tail -3
+        elif [ -d "$sat_src" ]; then
+            echo "--- $s --- (sin install.sh, omitido)"
+        else
+            echo "--- $s --- (no clonado, omitido)"
+        fi
+        echo
+    done
+else
+    echo "==> Satélites omitidos (--no-satellites)"
+fi
 
 echo
 echo "==> Instalación completa."
 echo "    LANE en $DST"
 echo "    .desktop en $DESKTOP_DST"
+echo "    Satélites en /opt/lane-*"
