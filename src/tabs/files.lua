@@ -11,8 +11,8 @@ local icon_theme = require("lib.icon_theme")
 
 local M = {}
 
-local ICON_DIR = os.getenv("HOME") ..
-    "/proyectos/lane/icons-png/88/files/"
+-- Los iconos de navegacion se resuelven via lib.icons.
+-- Los iconos de mimetype usan lib.icon_theme (el tema del sistema).
 
 local ROW_H   = 26
 local HEAD_H  = 26
@@ -168,7 +168,8 @@ function NavButton.new(theme, icon_name, on_click, opts)
     self._hover_visual = true
     self.on_click = on_click
     self.icon_name = icon_name
-    self.icon_surface = cairo.load_png_cached(ICON_DIR .. icon_name .. ".png")
+    self.icon_surface = require("lib.icons").surface(
+        "files/" .. icon_name, opts.size or 24)
     self.size = opts.size or 24
     self.min_w, self.max_w = self.size + 8, self.size + 8
     self.min_h, self.max_h = NAV_H, NAV_H

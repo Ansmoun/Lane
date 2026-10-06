@@ -1,126 +1,142 @@
--- Tab Configuracion: apariencia, entorno y atajos.
--- Tres tabs internos:
---   Apariencia  paleta, animaciones, tasa de refresco
---   Entorno     selector de gestor de ventanas
---   Atajos      (en construccion)
+-- Tab Configuración: sidebar + contenido + status.
+--
+-- Estructura del sidebar:
+--   Apariencia          (header, no clickeable)
+--     Paleta            dropdown con preview de swatches
+--     Barra             radio group con 9 estilos
+--     Wallpaper         ruta + aplicar
+--     Animaciones       master + 3 sub + hz + duración
+--   Launcher            posición
+--   Atajos              abrir sxhkdrc
+--   Sistema             recargar daemons, reiniciar sesión
 
 local W = require("lib.widgets")
 local U = require("lib.helpers.util")
 local D = require("lib.data.config")
-local S = require("lib.data.session")
 local log = require("lib.log")
+local thumbs = require("lib.thumbs")
 
 local M = {}
 
--- ══════════════════════════════════════════════════════════════════
--- Helpers de UI (fuera de M.new para no recrearlos por instancia)
--- ══════════════════════════════════════════════════════════════════
+local HOME = os.getenv("HOME") or "."
 
--- Texto secundario (muted)
-local function muted(theme, text, font)
+-- ── Helpers de layout.lua ─────────────────────────────────────────
+
+local function find_layout()
+    for _, p in ipairs({ "layout.lua", HOME .. "/.config/lane/layout.lua" }) do
+        local f = io.open(p, "r")
+        if f then f:close() return p end
+    end
+    return nil
+end
+
+local function read_layout_style()
+    local p = find_layout()
+    if not p then return nil end
+    local f = io.open(p, "r"); if not f then return nil end
+    local c = f:read("*a"); f:close()
+    return c:match('style%s*=%s*"([^"]*)"')
+end
+
+local function update_layout_style(style)
+    local p = find_layout()
+    if not p then return false, "layout.lua no encontrado" end
+    local f = io.open(p, "r"); if not f then return false, "no se puede leer" end
+    local c = f:read("*a"); f:close()
+    local new_c, n = c:gsub('style%s*=%s*"[^"]*"',
+        string.format('style     = "%s"', style), 1)
+    if n == 0 then
+        new_c = c:gsub("return%s*{",
+            string.format('return {\n    style     = "%s",', style), 1)
+    end
+    local w = io.open(p, "w"); if not w then return false, "no se puede escribir" end
+    w:write(new_c); w:close()
+    return true
+end
+
+-- ── Helpers de UI ─────────────────────────────────────────────────
+
+local function muted(T, text, font)
     return W.Text.new {
         text = text, font = font or "DejaVu Sans 10",
-        r = theme.muted_rgb[1],
-        g = theme.muted_rgb[2],
-        b = theme.muted_rgb[3],
+        r = T.muted_rgb[1], g = T.muted_rgb[2], b = T.muted_rgb[3],
         align = "left", valign = "center",
     }
 end
 
--- Texto principal
-local function fg(theme, text, font)
+local function section_header(T, text)
     return W.Text.new {
-        text = text, font = font or "DejaVu Sans Bold 11",
-        r = theme.fg_rgb[1],
-        g = theme.fg_rgb[2],
-        b = theme.fg_rgb[3],
-        align = "center", valign = "center",
+        text = text, font = "DejaVu Sans Bold 13",
+        r = T.accent_rgb[1], g = T.accent_rgb[2], b = T.accent_rgb[3],
+        align = "left", valign = "center",
     }
 end
 
--- Fila de ciclado: [label muted (w=1)] [<] [valor] [>]
-local function make_cycler(theme, label, getter, setter, list_getter,
-                          on_change)
-    local title = muted(theme, label)
-    local value = fg(theme, getter())
-    local btn_prev = W.Button.new {
-        text = "<", flat = true, font = "DejaVu Sans 12",
-        padding_x = 10, padding_y = 4,
-        color_hover = theme.bg_focus_rgb,
-    }
-    local btn_next = W.Button.new {
-        text = ">", flat = true, font = "DejaVu Sans 12",
-        padding_x = 10, padding_y = 4,
-        color_hover = theme.bg_focus_rgb,
-    }
+local function spacer(h)
+    return W.Text.new { text = "", font = "DejaVu Sans 1",
+        min_width = 1, min_height = h or 8 }
+end
 
-    local function cycle(delta)
-        local list = list_getter()
-        if #list == 0 then return end
-        local cur = getter()
-        local idx = 1
-        for i, v in ipairs(list) do
-            if v == cur then idx = i; break end
-        end
-        idx = idx + delta
-        if idx < 1 then idx = #list end
-        if idx > #list then idx = 1 end
-        local new_val = list[idx]
-        value:set_text(new_val)
-        setter(new_val)
-        if on_change then on_change() end
-    end
-
-    btn_prev.opts.on_click = function() cycle(-1) end
-    btn_next.opts.on_click = function() cycle(1) end
-
+local function row(T, label, control)
     return W.Group.new {
-        orientation = "horizontal", spacing = 8,
+        orientation = "horizontal", spacing = 12,
         children = {
-            { widget = title,    weight = 1 },
-            { widget = btn_prev, weight = 0 },
-            { widget = value,    weight = 0 },
-            { widget = btn_next, weight = 0 },
+            { widget = muted(T, label), weight = 1 },
+            { widget = control,        weight = 0 },
         },
     }
 end
 
--- Fila toggle: [label muted (w=1)] [boton]
-local function make_toggle(theme, label, getter, setter, on_change)
-    local title = muted(theme, label)
-    local btn = W.Button.new {
-        text = getter() and "Si" or "No",
-        flat = true, font = "DejaVu Sans Bold 11",
-        padding_x = 12, padding_y = 4,
-        color_hover = theme.bg_focus_rgb,
+local function column(children, spacing, padding)
+    return W.Group.new {
+        orientation = "vertical",
+        spacing = spacing or 10,
+        padding = padding or 18,
+        children = children,
     }
+end
+
+-- ── Controles genéricos ───────────────────────────────────────────
+
+local function make_button(T, text, on_click, opts)
+    opts = opts or {}
+    return W.Button.new {
+        text = text,
+        font = opts.font or "DejaVu Sans 10",
+        flat = opts.flat ~= false,
+        padding_x = opts.padding_x or 12,
+        padding_y = opts.padding_y or 6,
+        corner_radius = opts.corner_radius or 5,
+        color_hover = T.bg_focus_rgb,
+        color_text = opts.color_text or T.fg_rgb,
+        min_width = opts.min_width,
+        on_click = on_click,
+    }
+end
+
+local function make_toggle(T, getter, setter)
+    local btn = make_button(T, getter() and "Activado" or "Desactivado", nil,
+        { min_width = 110 })
     btn.opts.on_click = function()
-        local new_val = not getter()
-        setter(new_val)
-        btn:set_text(new_val and "Si" or "No")
-        if on_change then on_change() end
+        local v = not getter()
+        setter(v)
+        btn:set_text(v and "Activado" or "Desactivado")
     end
-    return W.Group.new {
-        orientation = "horizontal", spacing = 8,
-        children = {
-            { widget = title, weight = 1 },
-            { widget = btn,   weight = 0 },
-        },
-    }
+    return btn
 end
 
--- Fila numerica: [label muted (w=1)] [input]
-local function make_numeric(theme, label, getter, setter, min, max, on_change)
-    local title = muted(theme, label)
+local function make_numeric(T, getter, setter, min, max, width)
     local input = W.TextInput.new {
         text = tostring(getter()),
-        font = "DejaVu Sans Bold 11",
+        font = "DejaVu Sans 10",
         padding_x = 8, padding_y = 4,
-        color_bg = nil,
-        color_border = theme.separator,
-        corner_radius = 3,
-        min_width = 60,
-        min_height = 24,
+        color_bg = T.bg_card,
+        color_border = T.separator,
+        color_text = T.fg_rgb,
+        color_cursor = T.accent_rgb,
+        corner_radius = 4,
+        min_width = width or 60,
+        min_height = 26,
         on_submit = function(text)
             input:set_focused(false)
             local n = tonumber(U.trim(text or ""))
@@ -129,405 +145,388 @@ local function make_numeric(theme, label, getter, setter, min, max, on_change)
                 return
             end
             n = math.floor(n)
-            if n ~= getter() then
-                setter(n)
-                input:set_text(tostring(n))
-                if on_change then on_change() end
-            end
+            setter(n)
+            input:set_text(tostring(n))
         end,
         on_cancel = function()
             input:set_text(tostring(getter()))
             input:set_focused(false)
         end,
     }
-    input.opts.on_focus_request = function()
-        input:set_focused(true)
-    end
-    return W.Group.new {
-        orientation = "horizontal", spacing = 8,
-        children = {
-            { widget = title, weight = 1 },
-            { widget = input, weight = 0 },
-        },
-    }
+    input.opts.on_focus_request = function() input:set_focused(true) end
+    return input
 end
 
--- Divisor de seccion: label + linea
-local function make_section_title(theme, text)
-    local title = W.Text.new {
-        text = text, font = "DejaVu Sans Bold 10",
-        r = theme.accent_rgb[1],
-        g = theme.accent_rgb[2],
-        b = theme.accent_rgb[3],
-        align = "left", valign = "center",
+-- ── Sección: Paleta ───────────────────────────────────────────────
+
+local function build_paleta(T, state, set_status, apply_palette)
+    -- item list del dropdown, con el id = nombre de paleta
+    local items = {}
+    for _, name in ipairs(state.palettes_list) do
+        items[#items + 1] = { id = name, label = name }
+    end
+
+    -- Dibujar un mini preview de swatches para cada item
+    local function draw_preview(cr, item, x, y, w, h)
+        local path = state.palettes_dir .. "/" .. item.id .. ".lua"
+        local f = io.open(path, "r")
+        if not f then return end
+        local chunk = loadfile(path)
+        f:close()
+        if not chunk then return end
+        local ok, p = pcall(chunk)
+        if not ok or not p or not p.colors then return end
+        local G = require("lib.helpers.graphics")
+        local keys = { "bg", "bg_card", "accent", "fg", "urgent" }
+        local n = #keys
+        local sw = (w - (n - 1) * 2) / n
+        for i, k in ipairs(keys) do
+            local hex = p.colors[k] or (p.semantic and p.semantic[k])
+            if hex then
+                local r, g, b = G.hex_to_rgba(hex)
+                require("lib.cairo").set_rgb(cr, r, g, b)
+                require("lib.cairo").rounded_rect(
+                    cr, x + (i - 1) * (sw + 2), y, sw, h, 3)
+                require("lib.cairo").fill(cr)
+            end
+        end
+    end
+
+    local dd = W.Dropdown.new {
+        items = items,
+        selected = state.pending.palette,
+        theme = T,
+        row_h = 34,
+        draw_preview = draw_preview,
+        on_select = function(id)
+            state.pending.palette = id
+            apply_palette(id)
+        end,
     }
-    return W.Group.new {
-        orientation = "horizontal", padding = 0,
-        children = { { widget = title, weight = 1 } },
-    }
+
+    return column({
+        { widget = section_header(T, "Paleta"), weight = 0 },
+        { widget = muted(T,
+            "Colores base del entorno. Se aplica en caliente."), weight = 0 },
+        { widget = dd, weight = 0 },
+    }, 10, 18)
 end
 
--- ══════════════════════════════════════════════════════════════════
--- Tab Apariencia
--- ══════════════════════════════════════════════════════════════════
+-- ── Sección: Barra ────────────────────────────────────────────────
 
-local function build_apariencia_tab(srv, theme, state)
-    local pending = state.pending
+local BAR_STYLES = {
+    { id = "dock",        label = "Dock (flotante abajo)" },
+    { id = "arrow",       label = "Arrow (clásica)" },
+    { id = "minimal",     label = "Minimal (sin fondo)" },
+    { id = "island",      label = "Island (pastillas)" },
+    { id = "underline",   label = "Underline (subrayado)" },
+    { id = "glyph",       label = "Glyph (separador │)" },
+    { id = "glyph_thick", label = "Glyph thick (separador ┃)" },
+    { id = "gap",         label = "Gap (espacios)" },
+    { id = "none",        label = "None (todo pegado)" },
+}
 
-    local update_status -- forward
-
-    local theme_cycler = make_cycler(theme, "Tema",
-        function() return pending.theme end,
-        function(v) pending.theme = v end,
-        function() return state.themes_list end,
-        function()
-            pending.dirty = true
-            if update_status then update_status() end
-        end)
-
-    local palette_cycler = make_cycler(theme, "Paleta",
-        function() return pending.palette end,
-        function(v) pending.palette = v end,
-        function() return state.palettes_list end,
-        function()
-            pending.dirty = true
-            if update_status then update_status() end
-        end)
-
-    local anim_row = make_toggle(theme, "Animar panel",
-        function() return pending.animate_panel end,
-        function(v) pending.animate_panel = v end,
-        function()
-            pending.dirty = true
-            if update_status then update_status() end
-        end)
-
-    local tabs_row = make_toggle(theme, "Crossfade entre tabs",
-        function() return pending.animate_tabs end,
-        function(v) pending.animate_tabs = v end,
-        function()
-            pending.dirty = true
-            if update_status then update_status() end
-        end)
-
-    local widgets_row = make_toggle(theme, "Animar entrada de widgets",
-        function() return pending.animate_widgets end,
-        function(v) pending.animate_widgets = v end,
-        function()
-            pending.dirty = true
-            if update_status then update_status() end
-        end)
-
-    local values_row = make_toggle(theme, "Animar cambios de datos",
-        function() return pending.animate_values end,
-        function(v) pending.animate_values = v end,
-        function()
-            pending.dirty = true
-            if update_status then update_status() end
-        end)
-
-    local hz_row = make_numeric(theme, "Tasa de refresco (Hz)",
-        function() return pending.anim_hz end,
-        function(v) pending.anim_hz = v end,
-        1, 240,
-        function()
-            pending.dirty = true
-            if update_status then update_status() end
-        end)
-
-    local dur_row = make_numeric(theme, "Duracion del fade (ms)",
-        function() return pending.anim_duration end,
-        function(v) pending.anim_duration = v end,
-        50, 5000,
-        function()
-            pending.dirty = true
-            if update_status then update_status() end
-        end)
-
-    local hint = W.Text.new {
-        text = "Hz: 1-240. Duracion: 50-5000 ms.",
-        font = "DejaVu Sans 8",
-        r = theme.muted_rgb[1],
-        g = theme.muted_rgb[2],
-        b = theme.muted_rgb[3],
-        align = "left", valign = "center",
-        wrap = true,
+local function build_barra(T, state, set_status)
+    local rg = W.RadioGroup.new {
+        items = BAR_STYLES,
+        selected = state.current_style,
+        theme = T,
+        row_h = 32,
+        on_select = function(id)
+            state.current_style = id
+            local ok, err = update_layout_style(id)
+            if ok then
+                os.execute("echo 'style " .. id .. "' > /tmp/lane-bar.cmd")
+                set_status("Estilo: " .. id, false)
+            else
+                set_status("Error: " .. tostring(err), true)
+            end
+        end,
     }
 
-    local status_label = W.Text.new {
-        text = "", font = "DejaVu Sans 10",
-        align = "center", valign = "center",
-        r = 0.75, g = 0.75, b = 0.80,
-    }
-
-    update_status = function()
-        if pending.dirty then
-            status_label:set_text("Cambios pendientes - pulsa Aplicar")
-        else
-            status_label:set_text("Sin cambios")
-        end
-    end
-    update_status()
-
-    local btn_apply = W.Button.new {
-        text = "Aplicar", flat = true, font = "DejaVu Sans Bold 10",
-        padding_x = 14, padding_y = 6,
-        color_hover = theme.bg_focus_rgb,
-        color_text = { 0.55, 0.85, 0.60 },
-    }
-    btn_apply.opts.on_click = function()
-        log.info("config", "aplicar apariencia: tema=%s paleta=%s panel=%s tabs=%s widgets=%s values=%s hz=%d dur=%d",
-            pending.theme, pending.palette,
-            tostring(pending.animate_panel),
-            tostring(pending.animate_tabs),
-            tostring(pending.animate_widgets),
-            tostring(pending.animate_values),
-            pending.anim_hz, pending.anim_duration)
-
-        D.set("theme", pending.theme)
-        D.set("palette", pending.palette)
-
-        -- Escribir tambien el archivo que lee theme.find_palette_path().
-        -- D.set escribe a conf.lua (~/.config/awesome/), que es la
-        -- config del awesome original. theme.lua lee de
-        -- ~/.config/lane/palette. Son dos archivos distintos: hay
-        -- que escribir ambos para que los demas procesos, que hacen
-        -- theme.reload_in_place() sin argumento, lean la paleta nueva.
-        U.write_file(
-            (os.getenv("HOME") or "") .. "/.config/lane/palette",
-            pending.palette .. "\n")
-        D.set_bool("animate_panel",   pending.animate_panel)
-        D.set_bool("animate_tabs",    pending.animate_tabs)
-        D.set_bool("animate_widgets", pending.animate_widgets)
-        D.set_bool("animate_values",  pending.animate_values)
-        D.set_int("anim_hz", pending.anim_hz)
-        D.set_int("anim_duration", pending.anim_duration)
-
-        local anim = require("lib.anim")
-        if anim.is_ready() then anim.set_fps(pending.anim_hz) end
-
-        local theme_mod = require("lib.theme")
-        local path = theme_mod.palette_path(pending.palette)
-        local ok, err = theme_mod.reload_in_place(theme, path)
-        if not ok then
-            log.error("config", "reload fallo: %s", tostring(err))
-            status_label:set_text("Error: " .. tostring(err))
-            return
-        end
-
-        -- Avisar a los demas procesos del entorno (daemons y otras
-        -- apps abiertas) que la paleta cambio. Ellos recargan y se
-        -- reconstruyen solos al recibir SIGUSR1.
-        local reload = require("lib.reload")
-        local n = reload.broadcast()
-
-        -- La reconstruccion de ESTE proceso la dispara theme.watch
-        -- (registrado por lib.app).
-        if n > 0 then
-            status_label:set_text(string.format(
-                "Aplicado. Avisados %d procesos.", n))
-        else
-            status_label:set_text("Aplicado.")
-        end
-        pending.dirty = false
-    end
-
-    local content = W.Group.new {
-        orientation = "vertical", spacing = 10, padding = 0,
-        children = {
-            make_section_title(theme, "Apariencia"),
-            theme_cycler,
-            palette_cycler,
-            make_section_title(theme, "Animaciones"),
-            anim_row,
-            tabs_row,
-            widgets_row,
-            values_row,
-            hz_row,
-            dur_row,
-            hint,
-            status_label,
-            btn_apply,
-        },
-    }
-
-    return W.Card.new {
-        content = content, padding = 16,
-        bg = theme.bg_card_rgb,
-        border = theme.separator_rgb,
-    }
+    return column({
+        { widget = section_header(T, "Barra"), weight = 0 },
+        { widget = muted(T,
+            "Forma en que se dibujan separadores y fondo. Se aplica en caliente."),
+          weight = 0 },
+        { widget = rg, weight = 0 },
+    }, 10, 18)
 end
 
--- ══════════════════════════════════════════════════════════════════
--- Tab Entorno
--- ══════════════════════════════════════════════════════════════════
+-- ── Sección: Wallpaper ────────────────────────────────────────────
 
-local function build_entorno_tab(srv, theme, state)
-    -- Detectar WMs
-    local wms = S.list_installed()
-    local current_wm = S.get_wm() or (wms[1] and wms[1].id)
-    local pending_wm = current_wm
+local WALLPAPER_MODES = {
+    { id = "cover",   label = "Cover (llenar, recortar)" },
+    { id = "contain", label = "Contain (entera, bandas)" },
+    { id = "stretch", label = "Stretch (estirar)" },
+    { id = "center",  label = "Center (tamaño nativo)" },
+}
 
-    if #wms == 0 then
-        return W.Card.new {
-            content = W.Text.new {
-                text = "No se detectaron gestores de ventanas en $PATH.",
-                font = "DejaVu Sans 11",
-                r = theme.muted_rgb[1],
-                g = theme.muted_rgb[2],
-                b = theme.muted_rgb[3],
-                align = "center", valign = "center",
-                wrap = true,
-            },
-            padding = 20,
-            bg = theme.bg_card_rgb,
-            border = theme.separator_rgb,
-        }
+local function build_wallpaper(T, state, set_status, apply_wallpaper)
+    local cairo = require("lib.cairo")
+
+    -- Preview grande del wallpaper actual (contain).
+    local preview_surf = nil
+    if state.wallpaper_path then
+        local thumb = thumbs.ensure(state.wallpaper_path, 480)
+        if thumb then preview_surf = cairo.load_png_cached(thumb) end
     end
 
-    -- Botonera de WMs: una fila por WM, con boton radio a la izquierda
-    local wm_rows = {}
-    local radio_buttons = {}
-
-    local function update_radios()
-        for id, btn in pairs(radio_buttons) do
-            btn:set_text(id == pending_wm and "[X]" or "[ ]")
-        end
-    end
-
-    for _, wm in ipairs(wms) do
-        local radio = W.Button.new {
-            text = (wm.id == pending_wm) and "[X]" or "[ ]",
-            flat = true, font = "DejaVu Sans Mono Bold 12",
-            padding_x = 8, padding_y = 4,
-            color_hover = theme.bg_focus_rgb,
+    local preview_widget
+    if preview_surf then
+        preview_widget = W.Icon.new {
+            surface = preview_surf,
+            fit = "contain",
+            min_width = 200, min_height = 260,
         }
-        radio.opts.on_click = function()
-            pending_wm = wm.id
-            update_radios()
-        end
-        radio_buttons[wm.id] = radio
-
-        local name = W.Text.new {
-            text = wm.name, font = "DejaVu Sans Bold 11",
-            r = theme.fg_rgb[1],
-            g = theme.fg_rgb[2],
-            b = theme.fg_rgb[3],
-            align = "left", valign = "center",
-        }
-        local desc = muted(theme, wm.desc, "DejaVu Sans 9")
-
-        local info = W.Group.new {
-            orientation = "vertical", spacing = 0, padding = 0,
-            children = {
-                { widget = name, weight = 0 },
-                { widget = desc, weight = 0 },
-            },
-        }
-
-        wm_rows[#wm_rows + 1] = W.Group.new {
-            orientation = "horizontal", spacing = 10, padding = 0,
-            children = {
-                { widget = radio, weight = 0 },
-                { widget = info,  weight = 1 },
-            },
-        }
-    end
-
-    local status_label = W.Text.new {
-        text = "Actual: " .. tostring(current_wm) ..
-               "    ·    Se aplica al reiniciar la sesion",
-        font = "DejaVu Sans 9",
-        r = theme.muted_rgb[1],
-        g = theme.muted_rgb[2],
-        b = theme.muted_rgb[3],
-        align = "center", valign = "center",
-    }
-
-    local btn_apply = W.Button.new {
-        text = "Aplicar gestor de ventanas",
-        flat = true, font = "DejaVu Sans Bold 10",
-        padding_x = 14, padding_y = 6,
-        color_hover = theme.bg_focus_rgb,
-        color_text = { 0.55, 0.85, 0.60 },
-    }
-    btn_apply.opts.on_click = function()
-        if pending_wm == current_wm then
-            status_label:set_text("Sin cambios. Actual: " .. current_wm)
-            return
-        end
-        S.set_wm(pending_wm)
-        current_wm = pending_wm
-        status_label:set_text("Guardado: " .. current_wm ..
-            "    ·    Se aplica al reiniciar la sesion")
-        log.info("config", "wm guardado: %s", current_wm)
-    end
-
-    local content_children = {
-        make_section_title(theme, "Gestor de ventanas"),
-        W.Text.new {
-            text = "El gestor de ventanas se cambia al reiniciar la sesion. " ..
-                   "No es posible cambiarlo en caliente.",
-            font = "DejaVu Sans 9",
-            r = theme.muted_rgb[1],
-            g = theme.muted_rgb[2],
-            b = theme.muted_rgb[3],
-            align = "left", valign = "center",
-            wrap = true,
-        },
-        W.Text.new { text = "", font = "DejaVu Sans 1", min_height = 6 },
-    }
-    for _, row in ipairs(wm_rows) do
-        content_children[#content_children + 1] = row
-    end
-    content_children[#content_children + 1] =
-        W.Text.new { text = "", font = "DejaVu Sans 1", min_height = 6 }
-    content_children[#content_children + 1] = status_label
-    content_children[#content_children + 1] = btn_apply
-
-    local content = W.Group.new {
-        orientation = "vertical", spacing = 8, padding = 0,
-        children = content_children,
-    }
-
-    return W.Card.new {
-        content = content, padding = 16,
-        bg = theme.bg_card_rgb,
-        border = theme.separator_rgb,
-    }
-end
-
--- ══════════════════════════════════════════════════════════════════
--- Tab Atajos (placeholder)
--- ══════════════════════════════════════════════════════════════════
-
-local function build_atajos_tab(srv, theme, state)
-    return W.Card.new {
-        content = W.Text.new {
-            text = "En construccion.",
+    else
+        preview_widget = W.Text.new {
+            text = "(sin preview)",
             font = "DejaVu Sans 11",
-            r = theme.muted_rgb[1],
-            g = theme.muted_rgb[2],
-            b = theme.muted_rgb[3],
+            r = T.muted_rgb[1], g = T.muted_rgb[2], b = T.muted_rgb[3],
             align = "center", valign = "center",
-            wrap = true,
-        },
-        padding = 20,
-        bg = theme.bg_card_rgb,
-        border = theme.separator_rgb,
+            min_height = 260,
+        }
+    end
+
+    local preview_box = W.Group.new {
+        orientation = "horizontal", spacing = 0,
+        children = { { widget = preview_widget, weight = 1 } },
     }
+    preview_box.min_h = 280
+    preview_box.max_h = 280
+
+    -- TextInput con la ruta actual + botón Aplicar.
+    local path_input
+    path_input = W.TextInput.new {
+        text = state.wallpaper_path or "",
+        font = "DejaVu Sans Mono 10",
+        padding_x = 8, padding_y = 4,
+        color_bg = T.bg_card,
+        color_border = T.separator,
+        color_text = T.fg_rgb,
+        color_cursor = T.accent_rgb,
+        corner_radius = 4,
+        min_height = 30,
+        min_width = 200,
+        on_submit = function(text)
+            path_input:set_focused(false)
+            local p = (text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if p == "" then return end
+            state.wallpaper_path = p
+            apply_wallpaper(p, state.wallpaper_mode)
+        end,
+        on_cancel = function()
+            path_input:set_text(state.wallpaper_path or "")
+            path_input:set_focused(false)
+        end,
+    }
+    path_input.opts.on_focus_request = function()
+        path_input:set_focused(true)
+    end
+
+    local btn_apply = make_button(T, "Aplicar", function()
+        local p = path_input:get_text():gsub("^%s+", ""):gsub("%s+$", "")
+        if p == "" then return end
+        state.wallpaper_path = p
+        apply_wallpaper(p, state.wallpaper_mode)
+    end)
+
+    local btn_open = make_button(T, "Examinar", function()
+        local dir = (state.wallpaper_path or ""):match("(.+)/[^/]+$") or HOME
+        os.execute("(xdg-open '" .. dir .. "') >/dev/null 2>&1 &")
+    end)
+
+    -- Dropdown de modo con 4 items visibles.
+    local mode_items = {}
+    for _, m in ipairs(WALLPAPER_MODES) do
+        mode_items[#mode_items + 1] = { id = m.id, label = m.label }
+    end
+    local mode_dd = W.Dropdown.new {
+        items = mode_items,
+        selected = state.wallpaper_mode,
+        theme = T,
+        row_h = 30,
+        visible_rows = 4,
+        on_select = function(id)
+            state.wallpaper_mode = id
+            D.set("wallpaper_mode", id)
+            apply_wallpaper(state.wallpaper_path, id)
+        end,
+    }
+
+    return column({
+        { widget = section_header(T, "Wallpaper"), weight = 0 },
+        { widget = preview_box, weight = 0 },
+
+        { widget = spacer(8), weight = 0 },
+        { widget = muted(T, "Ruta de la imagen"), weight = 0 },
+        { widget = path_input, weight = 0 },
+        { widget = W.Group.new {
+            orientation = "horizontal", spacing = 8,
+            children = {
+                { widget = btn_apply, weight = 0 },
+                { widget = btn_open,  weight = 0 },
+            },
+        }, weight = 0 },
+
+        { widget = spacer(10), weight = 0 },
+        { widget = muted(T, "Modo de relleno"), weight = 0 },
+        { widget = mode_dd, weight = 0 },
+    }, 10, 18)
 end
 
--- ══════════════════════════════════════════════════════════════════
--- M.new
--- ══════════════════════════════════════════════════════════════════
+-- ── Sección: Animaciones ──────────────────────────────────────────
+
+local function build_animaciones(T, state, set_status, apply_anim)
+    local function toggle_anim(getter, setter)
+        return make_toggle(T, getter, function(v)
+            setter(v)
+            apply_anim()
+        end)
+    end
+
+    return column({
+        { widget = section_header(T, "Animaciones"), weight = 0 },
+        { widget = muted(T,
+            "Efectos de transición del panel."), weight = 0 },
+        { widget = row(T, "Animaciones (master)",
+            toggle_anim(function() return state.pending.animate_panel end,
+                function(v) state.pending.animate_panel = v end)), weight = 0 },
+        { widget = row(T, "Cambio de tabs",
+            toggle_anim(function() return state.pending.animate_tabs end,
+                function(v) state.pending.animate_tabs = v end)), weight = 0 },
+        { widget = row(T, "Entrada de widgets",
+            toggle_anim(function() return state.pending.animate_widgets end,
+                function(v) state.pending.animate_widgets = v end)), weight = 0 },
+        { widget = row(T, "Cambios de valores",
+            toggle_anim(function() return state.pending.animate_values end,
+                function(v) state.pending.animate_values = v end)), weight = 0 },
+        { widget = row(T, "Tasa (Hz)",
+            make_numeric(T, function() return state.pending.anim_hz end,
+                function(v) state.pending.anim_hz = v; apply_anim() end,
+                1, 240, 70)), weight = 0 },
+        { widget = row(T, "Duración (ms)",
+            make_numeric(T, function() return state.pending.anim_duration end,
+                function(v) state.pending.anim_duration = v; apply_anim() end,
+                50, 2000, 80)), weight = 0 },
+    }, 10, 18)
+end
+
+-- ── Sección: Launcher ─────────────────────────────────────────────
+
+local function build_launcher(T, state, set_status)
+    return column({
+        { widget = section_header(T, "Launcher"), weight = 0 },
+        { widget = muted(T,
+            "Aplicación de búsqueda y ejecución. Se abre con super + d."),
+          weight = 0 },
+        { widget = spacer(8), weight = 0 },
+        { widget = muted(T,
+            "Configuración de posición y acoplamiento al dock: pendiente.\n" ..
+            "Hoy el launcher se ancla encima del dock (8 px de separación)."),
+          weight = 0 },
+    }, 12, 18)
+end
+
+-- ── Sección: Atajos ───────────────────────────────────────────────
+
+local function build_atajos(T, state, set_status)
+    return column({
+        { widget = section_header(T, "Atajos de teclado"), weight = 0 },
+        { widget = muted(T,
+            "El editor integrado está en desarrollo.\n" ..
+            "Por ahora se abre sxhkdrc en el editor externo."), weight = 0 },
+        { widget = make_button(T, "Abrir sxhkdrc", function()
+            os.execute("(xdg-open " .. HOME .. "/.config/sxhkd/sxhkdrc) " ..
+                ">/dev/null 2>&1 &")
+        end), weight = 0 },
+    }, 12, 18)
+end
+
+-- ── Sección: Sistema ──────────────────────────────────────────────
+
+local function build_sistema(T, state, set_status)
+    local function b(text, cmd, msg)
+        return make_button(T, text, function()
+            os.execute(cmd)
+            set_status(msg or text, false)
+        end)
+    end
+
+    return column({
+        { widget = section_header(T, "Barra"), weight = 0 },
+        { widget = W.Group.new {
+            orientation = "horizontal", spacing = 8,
+            children = {
+                { widget = b("Recargar barra",
+                    "echo reload > /tmp/lane-bar.cmd", "Barra recargada"),
+                  weight = 0 },
+                { widget = b("Barra a dock",
+                    "echo 'style dock' > /tmp/lane-bar.cmd", "Estilo: dock"),
+                  weight = 0 },
+                { widget = b("Barra a arrow",
+                    "echo 'style arrow' > /tmp/lane-bar.cmd", "Estilo: arrow"),
+                  weight = 0 },
+            },
+        }, weight = 0 },
+
+        { widget = spacer(10), weight = 0 },
+
+        { widget = section_header(T, "Daemons"), weight = 0 },
+        { widget = W.Group.new {
+            orientation = "horizontal", spacing = 8,
+            children = {
+                { widget = b("Reiniciar launcher",
+                    "(pkill -f 'apps/launcher.lua' 2>/dev/null; sleep 0.3; " ..
+                    "cd /opt/lane 2>/dev/null || cd ~/proyectos/lane; " ..
+                    "./run apps/launcher.lua > /tmp/lane-launcher.log 2>&1) &",
+                    "Launcher reiniciado"), weight = 0 },
+                { widget = b("Abrir /tmp", "(xdg-open /tmp) >/dev/null 2>&1 &"),
+                  weight = 0 },
+            },
+        }, weight = 0 },
+
+        { widget = spacer(10), weight = 0 },
+
+        { widget = section_header(T, "Sesión"), weight = 0 },
+        { widget = muted(T,
+            "Reiniciar sesión cierra la sesión gráfica actual.\n" ..
+            "Reiniciar sistema apaga la máquina."), weight = 0 },
+        { widget = W.Group.new {
+            orientation = "horizontal", spacing = 8,
+            children = {
+                { widget = b("Reiniciar sesión", "(bspc quit) >/dev/null 2>&1 &"),
+                  weight = 0 },
+                { widget = b("Reiniciar sistema",
+                    "(loginctl reboot) >/dev/null 2>&1 &"), weight = 0 },
+            },
+        }, weight = 0 },
+    }, 12, 18)
+end
+
+-- ── Sidebar ───────────────────────────────────────────────────────
+
+local SIDEBAR = {
+    { id = "hdr_apariencia", label = "Apariencia", header = true },
+    { id = "paleta",         label = "Paleta",       indent = 10 },
+    { id = "barra",          label = "Barra",        indent = 10 },
+    { id = "wallpaper",      label = "Wallpaper",    indent = 10 },
+    { id = "animaciones",    label = "Animaciones",  indent = 10 },
+    { id = "launcher",       label = "Launcher" },
+    { id = "atajos",         label = "Atajos" },
+    { id = "sistema",        label = "Sistema" },
+}
+
+local DEFAULT_SECTION = "paleta"
+
+-- ── M.new ─────────────────────────────────────────────────────────
 
 function M.new(srv, theme)
     log.info("config", "factory inicio")
 
     local state = {
         pending = {
-            theme           = D.get("theme")   or "gruvbox",
             palette         = D.get("palette") or "ayu",
             animate_panel   = D.get_bool("animate_panel", false),
             animate_tabs    = D.get_bool("animate_tabs",    true),
@@ -535,51 +534,165 @@ function M.new(srv, theme)
             animate_values  = D.get_bool("animate_values",  true),
             anim_hz         = D.get_int("anim_hz", 30),
             anim_duration   = D.get_int("anim_duration", 300),
-            dirty           = false,
         },
-        themes_list   = D.list_themes(),
-        palettes_list = D.list_palettes(),
+        palettes_list   = D.list_palettes(),
+        palettes_dir    = D.palettes_dir(),
+        current_style   = read_layout_style() or "dock",
+        wallpaper_path  = (os.getenv("LANE_WALLPAPER")
+                          or os.getenv("LANETK_WALLPAPER")
+                          or (HOME .. "/imagenes/wallpapers/98616585_p0_master1200.jpg")),
+        wallpaper_mode  = D.get("wallpaper_mode") or "cover",
     }
 
-    -- TabbedPanel con los tres tabs
-    local tabs = {
-        {
-            id = "apariencia", label = "Apariencia",
-            factory = function()
-                return { widget = build_apariencia_tab(srv, theme, state) }
-            end,
-        },
-        {
-            id = "entorno", label = "Entorno",
-            factory = function()
-                return { widget = build_entorno_tab(srv, theme, state) }
-            end,
-        },
-        {
-            id = "atajos", label = "Atajos",
-            factory = function()
-                return { widget = build_atajos_tab(srv, theme, state) }
-            end,
+    local status_label = W.Text.new {
+        text = "", font = "DejaVu Sans 10",
+        r = theme.muted_rgb[1], g = theme.muted_rgb[2], b = theme.muted_rgb[3],
+        align = "left", valign = "center",
+    }
+    local status_bar = W.Group.new {
+        orientation = "horizontal", spacing = 12, padding = 10,
+        children = { { widget = status_label, weight = 1 } },
+    }
+
+    local _timer
+    local function set_status(msg, is_error)
+        if is_error then
+            status_label:set_color(theme.urgent_rgb[1],
+                theme.urgent_rgb[2], theme.urgent_rgb[3])
+        else
+            status_label:set_color(theme.muted_rgb[1],
+                theme.muted_rgb[2], theme.muted_rgb[3])
+        end
+        status_label:set_text(msg)
+        if _timer then _timer:cancel(); _timer = nil end
+        _timer = srv:add_timer(2500, function()
+            status_label:set_text("")
+            _timer = nil
+        end)
+    end
+
+    local function apply_palette(name)
+        D.set("palette", name)
+        local theme_mod = require("lib.theme")
+        local path = theme_mod.palette_path(name)
+        local ok, err = theme_mod.reload_in_place(theme, path)
+        if ok then
+            set_status("Paleta: " .. name, false)
+        else
+            set_status("Error paleta: " .. tostring(err), true)
+        end
+    end
+
+    -- Aplicar wallpaper: relanzar el daemon con el path y modo.
+    local function shq(s)
+        return "'" .. s:gsub("'", [['"'"']]) .. "'"
+    end
+
+    local function apply_wallpaper(path, mode)
+        if not path or path == "" then return end
+        -- Resolver la raiz de LANE: preferir /opt/lane si existe.
+        local root = "/opt/lane"
+        local f = io.open(root .. "/run", "r")
+        if not f then
+            root = HOME .. "/proyectos/lane"
+        else
+            f:close()
+        end
+        -- pkill -f 'apps/wallpaper.lua' mataba al propio shell
+        -- porque el cmdline del shell contiene el patron. Anclar
+        -- el patron a ^luajit solo matchea al proceso daemon.
+        local cmd = string.format(
+            "pkill -f '^luajit apps/wallpaper.lua' 2>/dev/null; " ..
+            "sleep 0.4; " ..
+            "cd %s && " ..
+            "setsid nohup ./run apps/wallpaper.lua %s %s " ..
+            "> /tmp/lane-wallpaper.log 2>&1 < /dev/null &",
+            shq(root), shq(path), shq(mode or "cover"))
+        os.execute(cmd)
+        set_status("Wallpaper: " .. (mode or "cover"), false)
+    end
+
+    local function apply_anim()
+        D.set_bool("animate_panel",   state.pending.animate_panel)
+        D.set_bool("animate_tabs",    state.pending.animate_tabs)
+        D.set_bool("animate_widgets", state.pending.animate_widgets)
+        D.set_bool("animate_values",  state.pending.animate_values)
+        D.set_int("anim_hz", state.pending.anim_hz)
+        D.set_int("anim_duration", state.pending.anim_duration)
+        local anim = require("lib.anim")
+        if anim.is_ready() then anim.set_fps(state.pending.anim_hz) end
+        set_status("Animaciones actualizadas", false)
+    end
+
+    -- Sidebar items
+    local sidebar_children = {}
+    local items_by_id = {}
+    local stack  -- forward declaration
+    local function set_active_section(id)
+        if type(id) ~= "string" or not items_by_id[id] then return end
+        for _, item in pairs(items_by_id) do item:set_selected(false) end
+        items_by_id[id]:set_selected(true)
+        if stack then stack:set_active(id) end
+    end
+
+    for _, sec in ipairs(SIDEBAR) do
+        local item = W.SidebarItem.new {
+            id = sec.id, label = sec.label, theme = theme,
+            header = sec.header, indent = sec.indent,
+            on_click = function(id) set_active_section(id) end,
+        }
+        items_by_id[sec.id] = item
+        sidebar_children[#sidebar_children + 1] = { widget = item, weight = 0 }
+    end
+
+    local sidebar = W.Group.new {
+        orientation = "vertical",
+        spacing = 2,
+        padding = 10,
+        min_width = 190,
+        children = sidebar_children,
+    }
+
+    -- Content stack
+    stack = W.Stack.new {}
+    stack:add("paleta",      build_paleta(theme, state, set_status, apply_palette))
+    stack:add("barra",       build_barra(theme, state, set_status))
+    stack:add("wallpaper",   build_wallpaper(theme, state, set_status, apply_wallpaper))
+    stack:add("animaciones", build_animaciones(theme, state, set_status, apply_anim))
+    stack:add("launcher",    build_launcher(theme, state, set_status))
+    stack:add("atajos",      build_atajos(theme, state, set_status))
+    stack:add("sistema",     build_sistema(theme, state, set_status))
+
+    items_by_id[DEFAULT_SECTION]:set_selected(true)
+    stack:set_active(DEFAULT_SECTION)
+
+    local vsep = W.Text.new { text = "", font = "DejaVu Sans 1",
+        min_width = 1, min_height = 1 }
+
+    local body = W.Group.new {
+        orientation = "horizontal", spacing = 0,
+        children = {
+            { widget = sidebar, weight = 0 },
+            { widget = vsep,    weight = 0 },
+            { widget = stack,   weight = 1 },
         },
     }
 
-    local tabbed = W.TabbedPanel.new {
-        tabs = tabs,
-        compact = false,
-        theme = theme,
-        spacing = 8,
-    }
-
-    local layout = W.Group.new {
-        orientation = "vertical", spacing = 10, padding = 12,
-        children = { { widget = tabbed, weight = 1 } },
+    local root = W.Group.new {
+        orientation = "vertical", spacing = 0,
+        children = {
+            { widget = body,       weight = 1 },
+            { widget = status_bar, weight = 0 },
+        },
     }
 
     log.info("config", "factory OK")
     return {
-        widget = layout,
+        widget = root,
         start = function() log.info("config", "start") end,
-        stop = function() end,
+        stop = function()
+            if _timer then _timer:cancel(); _timer = nil end
+        end,
     }
 end
 

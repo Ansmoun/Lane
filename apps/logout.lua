@@ -25,7 +25,7 @@ local ffi    = require("ffi")
 ffi.cdef[[int usleep(unsigned int usec);]]
 
 local HOME       = os.getenv("HOME")
-local ICON_DIR   = HOME .. "/proyectos/lane/icons-png/88/logout/"
+-- Los iconos de logout se resuelven via lib.icons (prefiere SVG).
 local LOCK       = HOME .. "/.local/bin/lock"
 local TRIGGER    = "/tmp/lane-logout.cmd"
 
@@ -214,7 +214,6 @@ local function make_button(item)
     return LogoutButton.new {
         icon         = item.icon,
         label        = item.label,
-        icon_dir     = ICON_DIR,
         width        = w,
         height       = h,
         wide         = item.wide,

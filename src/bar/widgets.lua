@@ -8,46 +8,36 @@ local svg   = require("lib.svg")
 
 local M = {}
 
-local HOME = os.getenv("HOME") or "/root"
-local SVG   = HOME .. "/proyectos/lane/icons-src/awesome/"
-local ICONS = HOME .. "/proyectos/lane/icons-png/32/"
-
 local ICON_SIZE = 18
 
-local SVG_MAP = {
-    cpu    = SVG .. "cpu.svg",
-    mem    = SVG .. "ram.svg",
-    gpu    = SVG .. "gpu.svg",
-    temp   = SVG .. "temp.svg",
-    bat    = SVG .. "battery-outline.svg",
-    net    = SVG .. "net.svg",
-    bright = SVG .. "brightness.svg",
-    vol    = SVG .. "volume-white.svg",
-    prompt = SVG .. "tabs/search.svg",
+-- Nombres del helper lib.icons. Algunos widgets usan nombres cortos
+-- ("mem", "bat") que el helper no conoce; los traducimos acá.
+local ICON_ALIAS = {
+    mem    = "ram",
+    bat    = "battery-outline",
+    bright = "brightness",
+    vol    = "volume-white",
+    prompt = "search",
 }
-
-local function file_exists(p)
-    local f = io.open(p, "r")
-    if f then f:close() return true end
-    return false
-end
 
 local function make_icon(name, rgb, size)
     size = size or ICON_SIZE
-    local path = SVG_MAP[name]
-    if path and file_exists(path) then
+    local real = ICON_ALIAS[name] or name
+    local surf = require("lib.icons").surface(real, size)
+    if surf then
         return W.Icon.new {
-            path = path,
+            surface = surf,
             width = size, height = size,
             color = { rgb[1], rgb[2], rgb[3] },
             valign = "center",
         }
     end
-    return W.Icon.new {
-        path = ICONS .. name .. ".png",
-        width = size, height = size,
-        color = { rgb[1], rgb[2], rgb[3] },
-        valign = "center",
+    -- Fallback: un Text vacío del tamaño del icono, para que el layout
+    -- no se rompa si el icono no existe.
+    return W.Text.new {
+        text = "",
+        font = "DejaVu Sans 1",
+        min_width = size, min_height = size,
     }
 end
 
@@ -72,8 +62,9 @@ function BatteryIcon.new(opts)
     self.fill_base = opts.fill_base or { 0.57, 0.51, 0.45 }
     self.pct = 0
     self.charging = false
-    self.outline = svg.load(SVG .. "battery-outline.svg", self.bw, self.bh)
-    self.bolt    = svg.load(SVG .. "battery-bolt.svg",    self.bw, self.bh)
+    local I = require("lib.icons")
+    self.outline = I.surface("battery-outline", self.bw)
+    self.bolt    = I.surface("battery-bolt",    self.bw)
     self.min_w = self.bw
     self.min_h = self.bh
     self.max_w = self.bw

@@ -9,7 +9,11 @@
 SELF="$(readlink -f "$0")"
 PROJECT="$(dirname "$(dirname "$SELF")")"
 WM_CONF="$HOME/.config/lane/wm"
-LOG="/tmp/lane-session.log"
+# Log por proceso: /tmp/lane-session-<pid>.log.
+# Un archivo unico es fragil: dos sesiones en paralelo lo pisan, y
+# si el archivo quedo de una corrida con sudo, ansmoun no puede
+# escribir y el wrapper muere antes de arrancar.
+LOG="/tmp/lane-session-$$.log"
 
 # Todo lo que pase aqui queda en $LOG para depurar.
 exec >"$LOG" 2>&1

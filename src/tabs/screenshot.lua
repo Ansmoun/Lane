@@ -9,8 +9,8 @@ local log = require("lib.log")
 
 local M = {}
 
-local ICON_DIR = os.getenv("HOME") ..
-    "/proyectos/lane/icons-png/88/screenshot/"
+-- Los iconos de modo/calidad se resuelven via lib.icons.
+-- El helper prefiere SVG sobre PNG.
 
 local CARD_W, CARD_H   = 132, 90
 local QUAL_W, QUAL_H   = 55, 45
@@ -52,7 +52,6 @@ local function make_card(theme, icon, title, subtitle, on_click, opts)
     opts = opts or {}
     return CardButton.new {
         icon         = icon,
-        icon_dir     = ICON_DIR,
         title        = title,
         subtitle     = subtitle or "",
         width        = opts.w or CARD_W,
