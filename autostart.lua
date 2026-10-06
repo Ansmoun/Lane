@@ -31,4 +31,9 @@ return {
         cmd    = "./run apps/screenshot.lua",
         wait_x = true,
     },
+    {
+        name   = "logout",
+        cmd    = "./run apps/logout.lua",
+        wait_x = true,
+    },
 }

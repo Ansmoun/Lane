@@ -32,6 +32,70 @@ if [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ -S "/run/user/$(id -u)/bus" ]; then
     echo "DBUS exportado: $DBUS_SESSION_BUS_ADDRESS"
 fi
 
+# XDG_RUNTIME_DIR: pipewire y wireplumber crean sus sockets y
+# archivos de estado en este directorio. Sin el definido, pipewire
+# falla silenciosamente o crea los sockets en /tmp, y los clientes
+# no los encuentran.
+if [ -z "$XDG_RUNTIME_DIR" ]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    echo "XDG_RUNTIME_DIR exportado: $XDG_RUNTIME_DIR"
+fi
+
+# Servidor de audio.
+#
+# Void no arranca servicios de usuario automaticamente al entrar
+# en una sesion X. Sin systemd ni elogind gestionando user units,
+# hay que lanzar pipewire y wireplumber desde aqui.
+#
+# Orden estricto:
+#   1. pipewire    -- crea el socket y publica los nodos basicos
+#   2. wireplumber -- gestor de politicas, conecta a los dispositivos
+#                     ALSA reales y publica los nodos al bus
+#   3. pipewire-pulse (si esta) -- capa de compatibilidad que expone
+#                     el protocolo PulseAudio sobre pipewire para
+#                     clientes que no soportan pipewire nativo
+#
+# Los pgrep evitan duplicar procesos si el usuario ya los tiene
+# corriendo por otros medios (por ejemplo, servicios de runit
+# configurados a mano).
+
+if ! pgrep -x pipewire >/dev/null 2>&1; then
+    echo "--- arrancando pipewire ---"
+    pipewire >/tmp/lane-pipewire.log 2>&1 &
+    sleep 1
+fi
+
+if ! pgrep -x wireplumber >/dev/null 2>&1; then
+    echo "--- arrancando wireplumber ---"
+    wireplumber >/tmp/lane-wireplumber.log 2>&1 &
+    sleep 1
+fi
+
+if command -v pipewire-pulse >/dev/null 2>&1; then
+    if ! pgrep -x pipewire-pulse >/dev/null 2>&1; then
+        echo "--- arrancando pipewire-pulse ---"
+        pipewire-pulse >/tmp/lane-pipewire-pulse.log 2>&1 &
+        sleep 1
+    fi
+fi
+
+# pulseaudio y pipewire no pueden coexistir. Ambos publican el
+# socket pulse en $XDG_RUNTIME_DIR/pulse/native, y los clientes
+# se conectan a uno u otro de forma impredecible. Si pulseaudio
+# quedo vivo de una sesion previa, matarlo.
+if pgrep -x pulseaudio >/dev/null 2>&1; then
+    echo "--- matando pulseaudio (conflicto con pipewire) ---"
+    pkill -x pulseaudio
+    sleep 1
+fi
+
+echo "--- estado de audio tras arranque ---"
+for p in pipewire wireplumber pipewire-pulse pulseaudio; do
+    if pgrep -x "$p" >/dev/null 2>&1; then
+        echo "  $p: corriendo"
+    fi
+done
+
 # Autostart del toolkit. NO usa set -e: si falla, seguimos al WM.
 # Configurar monitores ANTES del autostart. Inline para no pagar
 # los sleeps del script externo (los sleeps son para hotplug, no

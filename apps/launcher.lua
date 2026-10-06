@@ -67,6 +67,17 @@ local win = nil
 local tab = nil
 local win_handle = nil
 
+-- Devuelve true solo si el handle esta visible Y la ventana sigue
+-- viva. El handle puede quedar en visible=true despues de que el
+-- tab destruya la ventana con win:close(). Confiar solo en el
+-- handle daba un ciclo en el que el primer mod+d solo reseteaba
+-- el handle y el segundo ya mostraba el launcher.
+local function launcher_is_open()
+    if not win_handle then return false end
+    if not win or win.destroyed then return false end
+    return win_handle:visible()
+end
+
 local function read_dock_geo()
     local f = io.open(DOCK_GEO_FILE, "r")
     if not f then return nil end
@@ -124,6 +135,14 @@ local function ensure_window()
         on_focus_in = function()
             if tab and tab.focus then tab.focus() end
         end,
+        on_close = function()
+            -- Borrar el archivo de bloqueo SIEMPRE que la ventana
+            -- se cierre, sea por do_hide o por win:close() desde
+            -- el tab (por ejemplo al ejecutar una app). Sin esto,
+            -- el dock sigue creyendo que el launcher esta abierto
+            -- y no se vuelve a ocultar hasta el proximo toggle.
+            os.remove(LOCK_FILE)
+        end,
     }
     if x then opts.x = x; opts.y = y
     else opts.x = "cursor-screen"; opts.y = "cursor-screen" end
@@ -139,7 +158,7 @@ local function ensure_window()
 end
 
 local function do_show()
-    if win_handle and win_handle:visible() then return end
+    if launcher_is_open() then return end
     ensure_window()
 
     -- Construir el tab SOLO la primera vez. En shows siguientes el
@@ -177,12 +196,20 @@ local function do_show()
 end
 
 local function do_hide()
-    if not win_handle or not win_handle:visible() then return end
-    log.info("launcher", "ocultando")
-    if win and not win.destroyed then
-        pcall(function() win:restore_input_focus() end)
-    end
+    -- El archivo de bloqueo se borra primero, sin condiciones.
+    -- Si el tab cerro la ventana por su cuenta (por ejemplo al
+    -- ejecutar una app), esta es la unica via de notificar al
+    -- dock que puede volver a ocultarse.
     os.remove(LOCK_FILE)
+    if not win_handle or not win_handle:visible() then return end
+    if not win or win.destroyed then
+        -- El handle apunta a una ventana destruida. Solo hay que
+        -- marcar el target a 0; no hay pixeles que animar.
+        win_handle:reset()
+        return
+    end
+    log.info("launcher", "ocultando")
+    pcall(function() win:restore_input_focus() end)
     win_handle:hide()
 end
 
@@ -191,7 +218,7 @@ local function do_toggle()
     -- de monitor), el launcher puede estar mostrado en la posicion
     -- vieja aunque win_handle:visible() diga true. En ese caso lo
     -- cerramos primero y lo abrimos en la posicion nueva.
-    if win_handle and win_handle:visible() then
+    if launcher_is_open() then
         local x, y = compute_position()
         if x and win and not win.destroyed then
             local moved = (win.x ~= x or win.y ~= y)

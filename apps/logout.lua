@@ -60,26 +60,6 @@ local srv = Server.new({ exit_on_empty = false })
 local mem = require("lib.mem")
 mem.attach(srv, "logout")
 
-
-
-local ITEMS = {
-    { id = "lock",    icon = "lock",    label = "Bloquear",
-      cmd = LOCK, hover = "#83a598", wide = false },
-    { id = "logout",  icon = "logout",  label = "Cerrar sesion",
-      cmd = 'loginctl terminate-session "$XDG_SESSION_ID" || loginctl terminate-user "$USER"',
-      hover = "#d65d0e", wide = false },
-    { id = "reboot",  icon = "reboot",  label = "Reiniciar",
-      cmd = "loginctl reboot",   hover = "#b8bb26", wide = false },
-    { id = "suspend", icon = "suspend", label = "Suspender",
-      cmd = "loginctl suspend",  hover = "#b16286", wide = false },
-    { id = "power",   icon = "power",   label = "Apagar",
-      cmd = "loginctl poweroff", hover = "#fb4934", wide = true  },
-}
-
-local srv = Server.new({ exit_on_empty = false })
-local mem = require("lib.mem")
-mem.attach(srv, "logout")
-
 -- ── Estado de animacion (mismo patron que apps/launcher.lua) ───────
 local ANIM_MS = 240
 local last_visible_h = -1
@@ -201,9 +181,6 @@ local T = theme.load()
 log.info("logout", "paleta: %s", T.path)
 
 anim.init(srv, { fps = 30 })
-
--- Forward declaration: do_hide se usa en on_click de los botones
-local do_hide
 
 -- Forward declaration: do_hide se usa en on_click de los botones
 local do_hide
