@@ -2,7 +2,7 @@
 -- watch_theme = true para que reload_in_place local dispare el
 -- rebuild del arbol (config aplica cambios de paleta en si mismo).
 
-local App = require("app")
+local App = require("lib.app")
 
 App.new {
     name  = "config",

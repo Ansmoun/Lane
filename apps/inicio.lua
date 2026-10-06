@@ -1,4 +1,4 @@
-local App = require("app")
+local App = require("lib.app")
 App.new {
     name  = "inicio",
     title = "LANE — Inicio",

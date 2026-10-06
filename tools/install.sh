@@ -162,7 +162,7 @@ echo "==> Verificando require cruzado con LaneTK"
 cd "$DST"
 if ./run -e '
     require("lib.server")
-    require("app")
+    require("lib.app")
     require("bar.engine")
     print("requires OK")
 ' 2>&1; then

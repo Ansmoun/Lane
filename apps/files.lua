@@ -1,5 +1,5 @@
 -- El path inicial viene de arg[1] si existe, si no $HOME.
-local App = require("app")
+local App = require("lib.app")
 local initial_path = (arg and arg[1]) or os.getenv("HOME")
 
 App.new {
