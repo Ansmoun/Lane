@@ -151,7 +151,7 @@ local function close_preview()
     if state == "done" then state = "idle" end
 end
 
-local PREV_W, PREV_H = 420, 400
+local PREV_W, PREV_H = 420, 440
 local PREV_THUMB_H   = 200
 
 -- Widget que reserva exactamente PREV_THUMB_H de alto y dibuja la
@@ -184,6 +184,77 @@ function PreviewArea:draw(cr)
     local dx = self.x0 + (cw - dw) / 2
     local dy = self.y0 + (ch - dh) / 2
     cairo.draw_surface(cr, self.surface, dx, dy, dw, dh)
+end
+
+-- shq: quote para pasar strings a comandos shell.
+local function shq(s)
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
+-- move_file: os.rename es atomico y barato en el mismo FS, pero
+-- falla con EXDEV si origen y destino estan en discos distintos.
+-- Fallback a cp -p + rm.
+local function move_file(src, dst)
+    local ok = os.rename(src, dst)
+    if ok then return true end
+    local cmd = string.format("cp -p %s %s && rm -f %s",
+        shq(src), shq(dst), shq(src))
+    local rc = os.execute(cmd)
+    return rc == 0 or rc == true
+end
+
+-- spawn_lane_files_pick_dir: abre lane-files en modo pick-dir y
+-- espera por el resultado sin bloquear el event loop del daemon.
+-- El hijo escribe la ruta elegida en out_file y el codigo de
+-- salida en done_file. Poll cada 200 ms; se detiene cuando el
+-- archivo .done existe.
+local function spawn_lane_files_pick_dir(cb)
+    local base = "/tmp/lane-shot-pick-" .. tostring(os.time())
+        .. "-" .. tostring(math.random(1000, 9999))
+    local sh   = base .. ".sh"
+    local out  = base .. ".out"
+    local done = base .. ".done"
+
+    local f = io.open(sh, "w")
+    if not f then cb(nil); return end
+    f:write("#!/bin/sh\n")
+    f:write("/opt/lane-files/run app.lua --pick-dir > "
+        .. shq(out) .. " 2>/dev/null\n")
+    f:write("echo $? > " .. shq(done) .. "\n")
+    f:close()
+    os.execute("chmod +x " .. shq(sh))
+
+    -- setsid -f: nueva sesion + fork sin esperar. La ventana de
+    -- lane-files aparece por encima del daemon y no lo bloquea.
+    os.execute("setsid -f sh -c " ..
+        shq(sh .. " >/dev/null 2>&1") .. " &")
+
+    local function cleanup()
+        os.remove(sh); os.remove(out); os.remove(done)
+    end
+
+    local function check()
+        local df = io.open(done, "r")
+        if not df then
+            srv:add_timeout(200, check)
+            return
+        end
+        local code = tonumber(df:read("*l")) or 1
+        df:close()
+        local chosen = nil
+        local of = io.open(out, "r")
+        if of then
+            chosen = of:read("*l")
+            of:close()
+        end
+        cleanup()
+        if code == 0 and chosen and chosen ~= "" then
+            cb(chosen)
+        else
+            cb(nil)
+        end
+    end
+    srv:add_timeout(200, check)
 end
 
 local function show_preview(path, kind)
@@ -229,7 +300,47 @@ local function show_preview(path, kind)
         r = T.muted_rgb[1], g = T.muted_rgb[2], b = T.muted_rgb[3],
     }
 
-    local btn_row = W.Group.new {
+    -- Guardar en... : cierra la preview, abre lane-files en modo
+    -- pick-dir, mueve el archivo (y su thumb si es video) y reabre
+    -- la preview en la nueva ruta. Si el usuario cancela, se
+    -- reabre en el lugar original.
+    local function save_as_action()
+        local src = path
+        local saved_kind = kind
+        close_preview()
+        spawn_lane_files_pick_dir(function(dest)
+            if not dest then
+                -- Cancelado: reabrir en el mismo path.
+                show_preview(src, saved_kind)
+                return
+            end
+            -- Normalizar: quitar barra final si la trajo.
+            dest = dest:gsub("/$", "")
+            local name = src:match("[^/]+$")
+            local dst = dest .. "/" .. name
+            if dst == src then
+                show_preview(src, saved_kind)
+                return
+            end
+            if move_file(src, dst) then
+                if saved_kind == "video" then
+                    local tsrc = src:gsub("%.mp4$", "_thumb.png")
+                    if file_exists(tsrc) then
+                        local tdst = dst:gsub("%.mp4$", "_thumb.png")
+                        move_file(tsrc, tdst)
+                    end
+                end
+                log.info("screenshot", "movido: %s -> %s", src, dst)
+                show_preview(dst, saved_kind)
+            else
+                log.warn("screenshot", "no se pudo mover %s -> %s",
+                    src, dst)
+                show_preview(src, saved_kind)
+            end
+        end)
+    end
+
+    local btn_row_top = W.Group.new {
         orientation = "horizontal", spacing = 4,
         children = {
             { widget = make_btn("Abrir", function()
@@ -240,9 +351,19 @@ local function show_preview(path, kind)
                 os.execute("printf '%s' '" .. path .. "' | xclip -selection clipboard")
                 close_preview()
             end), weight = 1 },
+            { widget = make_btn("Guardar en...", save_as_action), weight = 1 },
+        },
+    }
+    local btn_row_bottom = W.Group.new {
+        orientation = "horizontal", spacing = 4,
+        children = {
             { widget = make_btn("Carpeta", function()
                 local dir = path:match("(.+)/[^/]+$") or "."
-                os.execute("(xdg-open '" .. dir .. "') >/dev/null 2>&1 &")
+                -- Abrir con lane-files en vez de xdg-open (que en
+                -- este sistema apunta a pcmanfm). setsid -f para no
+                -- bloquear el daemon mientras la ventana esta abierta.
+                os.execute("setsid -f /opt/lane-files/run app.lua "
+                    .. shq(dir) .. " >/dev/null 2>&1 &")
                 close_preview()
             end), weight = 1 },
             { widget = make_btn("Borrar", function()
@@ -253,6 +374,13 @@ local function show_preview(path, kind)
             { widget = make_btn("Cerrar", function()
                 close_preview()
             end), weight = 1 },
+        },
+    }
+    local btn_row = W.Group.new {
+        orientation = "vertical", spacing = 4,
+        children = {
+            { widget = btn_row_top,    weight = 0 },
+            { widget = btn_row_bottom, weight = 0 },
         },
     }
 
