@@ -15,11 +15,11 @@ return {
     { name = "wallpaper", cmd = "./run apps/wallpaper.lua", wait_x = true },
 
     { name = "bar",
-      cmd  = "/opt/lane-bar/run /opt/lane-bar/app.lua",
+      cmd  = "/opt/lane-bar/run /opt/lane-bar/lane-bar.lua",
       wait_x = true, delay = 300 },
 
     { name = "launcher",
-      cmd  = "/opt/lane-launcher/run /opt/lane-launcher/app.lua",
+      cmd  = "/opt/lane-launcher/run /opt/lane-launcher/lane-launcher.lua",
       wait_x = true, delay = 400 },
 
     { name = "screenshot", cmd = "./run apps/screenshot.lua", wait_x = true },

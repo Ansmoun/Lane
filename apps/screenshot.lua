@@ -218,7 +218,7 @@ local function spawn_lane_files_pick_dir(cb)
     local f = io.open(sh, "w")
     if not f then cb(nil); return end
     f:write("#!/bin/sh\n")
-    f:write("/opt/lane-files/run app.lua --pick-dir > "
+    f:write("/opt/lane-files/run lane-files.lua --pick-dir > "
         .. shq(out) .. " 2>/dev/null\n")
     f:write("echo $? > " .. shq(done) .. "\n")
     f:close()
@@ -362,7 +362,7 @@ local function show_preview(path, kind)
                 -- Abrir con lane-files en vez de xdg-open (que en
                 -- este sistema apunta a pcmanfm). setsid -f para no
                 -- bloquear el daemon mientras la ventana esta abierta.
-                os.execute("setsid -f /opt/lane-files/run app.lua "
+                os.execute("setsid -f /opt/lane-files/run lane-files.lua "
                     .. shq(dir) .. " >/dev/null 2>&1 &")
                 close_preview()
             end), weight = 1 },
