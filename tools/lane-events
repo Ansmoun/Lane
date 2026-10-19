@@ -1,0 +1,55 @@
+#!/bin/sh
+# lane-events: cliente CLI del daemon de eventos de Lane.
+#
+# Uso:
+#   lane-events <verbo> [app]
+#
+# Ejemplos:
+#   lane-events toggle launcher
+#   lane-events toggle screenshot
+#   lane-events toggle logout
+#   lane-events wallpaper
+#   lane-events status
+#   lane-events ping
+#   lane-events quit
+#
+# Arranca el daemon si no está corriendo.
+
+DIR="/opt/lane"
+[ -d "$DIR" ] || DIR="$HOME/proyectos/lane"
+
+if [ ! -x "$DIR/run" ]; then
+    echo "lane-events: no encontré $DIR/run" >&2
+    exit 1
+fi
+
+SOCK="${XDG_RUNTIME_DIR:-/tmp}/lane-events.sock"
+CMD="$*"
+
+# Arrancar el daemon si no está.
+if [ ! -S "$SOCK" ]; then
+    nohup "$DIR/run" "$DIR/apps/events.lua" \
+        > /tmp/lane-events.log 2>&1 &
+    i=0
+    while [ $i -lt 40 ] && [ ! -S "$SOCK" ]; do
+        i=$((i+1))
+        sleep 0.05
+    done
+fi
+
+# Elegir cliente: socat o nc -U.
+if command -v socat >/dev/null 2>&1; then
+    printf '%s\n' "$CMD" | socat - UNIX-CONNECT:"$SOCK" 2>/dev/null
+elif command -v nc >/dev/null 2>&1; then
+    printf '%s\n' "$CMD" | nc -U "$SOCK" 2>/dev/null
+else
+    # Fallback: cliente Lua del toolkit.
+    exec /opt/lanetk/run -e "
+        package.path = '/opt/lanetk/src/?.lua;/opt/lanetk/src/?/init.lua;' .. package.path
+        local r, e = require('lib.unix_socket').client {
+            path = '$SOCK',
+            cmd  = '$CMD',
+        }
+        if r then io.write(r, '\n') else io.stderr:write(tostring(e), '\n') end
+    "
+fi

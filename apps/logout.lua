@@ -27,7 +27,6 @@ ffi.cdef[[int usleep(unsigned int usec);]]
 local HOME       = os.getenv("HOME")
 -- Los iconos de logout se resuelven via lib.icons (prefiere SVG).
 local LOCK       = HOME .. "/.local/bin/lock"
-local TRIGGER    = "/tmp/lane-logout.cmd"
 
 local BTN_W      = 120
 local BTN_H      = 100
@@ -300,7 +299,7 @@ local function do_show()
     log.info("logout", "mostrado")
 end
 
-do_hide = function()
+do_hide = function(keep_alive)
     if slide.target == 0 then return end
     log.info("logout", "ocultando")
 
@@ -314,6 +313,13 @@ do_hide = function()
 
     slide.target = 0
     animate_slide()
+    -- keep_alive = true: theme.watch o reload van a reconstruir.
+    -- false/nil: usuario cerró (Esc, click fuera, botón) o toggle.
+    -- Matar el proceso; lane-events respawnea al próximo toggle.
+    if not keep_alive then
+        log.info("logout", "menu cerrado, shutdown")
+        srv:stop()
+    end
 end
 
 local function do_toggle()
@@ -329,7 +335,7 @@ theme.watch(function()
     if not win or win.destroyed then return end
     log.info("logout", "rebuild por cambio de paleta")
     if slide.target == 1 then
-        do_hide()
+        do_hide(true)
     end
     xcb.destroy_window(srv.conn, win.id)
     win = nil
@@ -343,7 +349,7 @@ reload.install(srv, function()
     log.info("logout", "SIGUSR1: rebuild cross-process")
     theme.reload_in_place(T)
     if not win or win.destroyed then return end
-    if slide.target == 1 then do_hide() end
+    if slide.target == 1 then do_hide(true) end
     xcb.destroy_window(srv.conn, win.id)
     win = nil
     last_visible_h = -1
@@ -351,22 +357,19 @@ reload.install(srv, function()
     slide.target  = 0
 end)
 
-srv:watch_trigger(TRIGGER, function(cmd)
-    log.info("logout", "trigger: %s", cmd)
-    if cmd == "toggle" or cmd == "" then
-        do_toggle()
-    elseif cmd == "show" then
-        do_show()
-    elseif cmd == "hide" then
-        do_hide()
-    elseif cmd == "quit" then
-        do_hide()
-        srv:stop()
-    else
-        log.warn("logout", "comando desconocido: %s", cmd)
-    end
+-- Toggle por SIGUSR2 (lane-events).
+local signal = require("lib.signal")
+signal.watch(srv, signal.SIGUSR2, function()
+    log.info("logout", "SIGUSR2: toggle")
+    do_toggle()
 end)
 
-log.info("logout", "daemon listo. trigger: %s", TRIGGER)
+log.info("logout", "listo. SIGUSR2 para toggle.")
+
+if arg and arg[1] == "--toggle-on-start" then
+    log.info("logout", "--toggle-on-start: abriendo menú")
+    srv:add_timeout(50, function() do_toggle() end)
+end
+
 srv:run()
 log.info("logout", "adios")

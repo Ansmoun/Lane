@@ -1,15 +1,14 @@
 -- autostart.lua: daemons que se inician con la sesión de LANE.
 --
--- Dos tipos de entrada:
---   local    : el daemon vive en este mismo repositorio (./run apps/X.lua)
---   externo  : el daemon vive en su propio proyecto, instalado en /opt/
+-- Estructura:
+--   * bar       — siempre visible, daemon permanente.
+--   * wallpaper — one-shot al boot.
+--   * events    — dispatcher central. Spawnea on-demand a
+--                 launcher/screenshot/logout cuando el usuario
+--                 aprieta el atajo (via lane-events <cmd>).
 --
--- Solo se arrancan daemons de larga vida (barra, launcher). Las apps
--- one-shot (files, procs, disks, etc.) no van en autostart: se invocan
--- desde el launcher o desde atajos.
---
--- Al salir de la sesión (X se cae), todos los procesos mueren solos
--- porque pierden su conexión X.
+-- Los tres (launcher/screenshot/logout) YA NO arrancan al boot.
+-- Arrancan cuando el usuario los invoca por primera vez.
 
 return {
     { name = "wallpaper", cmd = "./run apps/wallpaper.lua", wait_x = true },
@@ -18,10 +17,7 @@ return {
       cmd  = "/opt/lane-bar/run /opt/lane-bar/lane-bar.lua",
       wait_x = true, delay = 300 },
 
-    { name = "launcher",
-      cmd  = "/opt/lane-launcher/run /opt/lane-launcher/lane-launcher.lua",
-      wait_x = true, delay = 400 },
-
-    { name = "screenshot", cmd = "./run apps/screenshot.lua", wait_x = true },
-    { name = "logout",     cmd = "./run apps/logout.lua",     wait_x = true },
+    { name = "events",
+      cmd  = "./run apps/events.lua",
+      wait_x = true, delay = 100 },
 }

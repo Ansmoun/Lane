@@ -27,7 +27,6 @@ local W      = require("lib.widgets")
 local Area   = require("lib.area")
 local xanim  = require("lib.xshape_anim")
 
-local TRIGGER   = "/tmp/lane-screenshot.cmd"
 local HOME      = os.getenv("HOME")
 local DIR_IMG   = HOME .. "/Imágenes/Capturas"
 local DIR_VID   = HOME .. "/Videos/Capturas"
@@ -140,7 +139,7 @@ local function human_size(n)
     return string.format("%.1f MB", n / (1024 * 1024))
 end
 
-local function close_preview()
+local function close_preview(keep_alive)
     if prev_timer then prev_timer:cancel(); prev_timer = nil end
     if not prev_handle or not prev_handle:visible() then return end
     xcb.ungrab_pointer(srv.conn)
@@ -149,6 +148,10 @@ local function close_preview()
     end
     prev_handle:hide()
     if state == "done" then state = "idle" end
+    if not keep_alive then
+        log.info("screenshot", "preview cerrada, shutdown")
+        srv:stop()
+    end
 end
 
 local PREV_W, PREV_H = 420, 440
@@ -258,7 +261,7 @@ local function spawn_lane_files_pick_dir(cb)
 end
 
 local function show_preview(path, kind)
-    if prev_win then close_preview() end
+    if prev_win then close_preview(true) end
 
     local thumb = path
     if kind == "video" then
@@ -571,6 +574,7 @@ local function do_foto(mode)
     else
         log.warn("screenshot", "foto no generada")
         state = "idle"
+        srv:stop()
     end
 end
 
@@ -649,6 +653,7 @@ local function on_recording_done()
     else
         log.warn("screenshot", "video no generado: %s", path)
         state = "idle"
+        srv:stop()
     end
     rec_file = nil
     rec_start = 0
@@ -957,7 +962,7 @@ local function show_advanced_panel(conf, on_save)
 end
 
 -- ── PANEL ─────────────────────────────────────────────────────────
-local function close_panel()
+local function close_panel(keep_alive)
     if not panel_handle or not panel_handle:visible() then return end
     xcb.ungrab_pointer(srv.conn)
     if panel_win and not panel_win.destroyed then
@@ -965,13 +970,17 @@ local function close_panel()
     end
     panel_handle:hide()
     if state == "panel" then state = "idle" end
+    if not keep_alive then
+        log.info("screenshot", "panel cerrado, shutdown")
+        srv:stop()
+    end
 end
 
 local function open_panel()
     local mod = require("tabs.screenshot")
 
     local function do_foto_mode(mode)
-        close_panel()
+        close_panel(true)
         local tm
         tm = srv:add_timer(80, function()
             tm:cancel()
@@ -996,7 +1005,7 @@ local function open_panel()
     end
 
     local function do_video_mode(mode, quality, custom_preset, custom_crf)
-        close_panel()
+        close_panel(true)
         local tm
         tm = srv:add_timer(80, function()
             tm:cancel()
@@ -1140,25 +1149,25 @@ reload.install(srv, function()
     end
 end)
 
-srv:watch_trigger(TRIGGER, function(cmd)
-    log.info("screenshot", "trigger: %s (state=%s)", cmd, state)
-    if cmd == "toggle" or cmd == "" then
-        do_toggle()
-    elseif cmd == "show" then
-        if state == "idle" then open_panel() end
-    elseif cmd == "hide" then
-        if state == "panel" then close_panel() end
-    elseif cmd == "stop" then
-        if state == "recording" then stop_recording() end
-    elseif cmd == "quit" then
-        if rec_win then rec_win:close("quit") end
-        destroy_all_windows()
-        srv:stop()
-    else
-        log.warn("screenshot", "cmd desconocido: %s", cmd)
-    end
+-- Toggle por SIGUSR2 (lane-events). El proceso sigue vivo entre
+-- paneles; el estado interno (idle/panel/recording/done) lo maneja
+-- do_toggle().
+local signal = require("lib.signal")
+signal.watch(srv, signal.SIGUSR2, function()
+    log.info("screenshot", "SIGUSR2: toggle (state=%s)", state)
+    do_toggle()
 end)
 
-log.info("screenshot", "daemon listo. trigger: %s", TRIGGER)
+log.info("screenshot", "listo. SIGUSR2 para toggle.")
+
+-- Si lane-events lo arrancó con --toggle-on-start, abrir el panel
+-- en el primer tick del loop. Con timeout (no directo) para que
+-- srv:run() ya esté procesando eventos X cuando la ventana se
+-- cree y reciba MapNotify.
+if arg and arg[1] == "--toggle-on-start" then
+    log.info("screenshot", "--toggle-on-start: abriendo panel")
+    srv:add_timeout(50, function() do_toggle() end)
+end
+
 srv:run()
 log.info("screenshot", "adios")
