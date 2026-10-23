@@ -5,7 +5,7 @@
 -- interno de la app) o spawnear uno nuevo.
 --
 -- Filosofía:
---   * Los hijos (launcher/screenshot/logout) son procesos
+--   * Los hijos (screenshot/logout) son procesos
 --     independientes con ciclo de vida propio: nacen, atienden, y
 --     siguen vivos esperando SIGUSR2 o cerrados (ventana oculta).
 --     Solo mueren por crash o SIGTERM externo.
@@ -32,14 +32,6 @@ local LANE_DIR = (function()
     end
 end)()
 
-local LAUNCHER_DIR = (function()
-    for _, d in ipairs({ "/opt/lane-launcher",
-                         HOME .. "/proyectos/lane-launcher" }) do
-        local f = io.open(d .. "/run", "r")
-        if f then f:close(); return d end
-    end
-end)()
-
 if not LANE_DIR then
     io.stderr:write("events: no se encontró lane/run\n")
     os.exit(1)
@@ -48,11 +40,6 @@ end
 local SPAWN_COOLDOWN = 1  -- segundos
 
 local APPS = {
-    launcher = {
-        entry = (LAUNCHER_DIR and LAUNCHER_DIR .. "/run "
-                 .. LAUNCHER_DIR .. "/lane-launcher.lua") or nil,
-        log   = "/tmp/lane-launcher.log",
-    },
     screenshot = {
         entry = LANE_DIR .. "/run " .. LANE_DIR .. "/apps/screenshot.lua",
         log   = "/tmp/lane-screenshot.log",
@@ -101,11 +88,12 @@ local function spawn(name, opts)
 end
 
 -- Estrategia uniforme:
---   * launcher/screenshot/logout: mueren al cerrar su ventana.
---     Cada toggle = spawn fresco con --toggle-on-start. El
---     proceso abre su ventana al arrancar (sin signal, sin race
---     del signalfd).
+--   * screenshot/logout: mueren al cerrar su ventana. Cada toggle
+--     = spawn fresco con --toggle-on-start. El proceso abre su
+--     ventana al arrancar (sin signal, sin race del signalfd).
 --   * wallpaper: one-shot, no togglea.
+--   * launcher: ya no vive acá. Es parte del daemon de lane-bar
+--     (super+d → /opt/lane-bar/bin/lane-bar toggle-launcher).
 --
 -- Si en el futuro querés cachear alguno, es agregar
 -- `idle_shutdown_ms` en el APPS entry y un timer en events. No
