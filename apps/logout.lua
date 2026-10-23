@@ -150,28 +150,38 @@ local function apply_mask(input_too)
     xcb.flush(srv.conn)
 end
 
-local function animate_slide()
+-- Animate no bloqueante con timer del loop. Cada frame le da
+-- chance al servidor X de procesar map + Expose + repintar. Con
+-- la versión síncrona (usleep), el cliente mandaba todos los
+-- flush en batch y el servidor pintaba solo el último: no había
+-- animación visible al abrir. Ver xshape_anim.lua.
+local slide_timer = nil
+local function animate_slide(on_done)
     local from = slide.current
     local to   = slide.target
-    if from == to then return end
+    if from == to then
+        if on_done then on_done() end
+        return
+    end
+    if slide_timer then slide_timer:cancel(); slide_timer = nil end
 
-    -- Animacion sincrona con usleep. Timing perfecto, sin variacion
-    -- por eventos X que retrasen timers. El server procesa todo en
-    -- orden y el usuario no puede interactuar durante 240ms.
     local steps = 16
-    local step_ms = ANIM_MS / steps
-    xcb.flush(srv.conn)
+    local step_ms = math.max(1, math.floor(ANIM_MS / steps))
+    local i = 0
 
-    for i = 1, steps do
+    slide_timer = srv:add_timer(step_ms, function()
+        i = i + 1
         local t = i / steps
+        if t > 1 then t = 1 end
         local e = t * t * (3 - 2 * t)
         slide.current = from + (to - from) * e
         apply_mask(i == steps)
-        if i < steps then
-            ffi.C.usleep(math.floor(step_ms * 1000))
+        if i >= steps then
+            if slide_timer then slide_timer:cancel(); slide_timer = nil end
+            slide.current = to
+            if on_done then on_done() end
         end
-    end
-    slide.current = to
+    end)
 end
 
 
@@ -247,6 +257,7 @@ local function do_show()
             disable_q_close = true,
             title = "Logout",
             backing_store = 2,   -- Always
+            initial_mask_hidden = true,
             on_draw = function(cr, cw, ch)
                 cairo.set_rgb(cr, bg[1], bg[2], bg[3])
                 cairo.rounded_rect(cr, 0, 0, cw, ch, RADIUS)
@@ -312,14 +323,15 @@ do_hide = function(keep_alive)
     end
 
     slide.target = 0
-    animate_slide()
-    -- keep_alive = true: theme.watch o reload van a reconstruir.
-    -- false/nil: usuario cerró (Esc, click fuera, botón) o toggle.
-    -- Matar el proceso; lane-events respawnea al próximo toggle.
-    if not keep_alive then
-        log.info("logout", "menu cerrado, shutdown")
-        srv:stop()
-    end
+    -- animate_slide async: srv:stop() en el callback, cuando el
+    -- último frame ya se aplicó. Sin esto, el stop llega antes y
+    -- el usuario ve el menú congelado a medio cerrar.
+    animate_slide(function()
+        if not keep_alive then
+            log.info("logout", "menu cerrado, shutdown")
+            srv:stop()
+        end
+    end)
 end
 
 local function do_toggle()
