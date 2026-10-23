@@ -146,12 +146,13 @@ local function close_preview(keep_alive)
     if prev_win and not prev_win.destroyed then
         pcall(function() prev_win:restore_input_focus() end)
     end
-    prev_handle:hide()
-    if state == "done" then state = "idle" end
-    if not keep_alive then
-        log.info("screenshot", "preview cerrada, shutdown")
-        srv:stop()
-    end
+    prev_handle:hide(function()
+        if state == "done" then state = "idle" end
+        if not keep_alive then
+            log.info("screenshot", "preview cerrada, shutdown")
+            srv:stop()
+        end
+    end)
 end
 
 local PREV_W, PREV_H = 420, 440
@@ -417,6 +418,7 @@ local function show_preview(path, kind)
             disable_q_close = true,
             title = title_text,
             backing_store = 2,
+            initial_mask_hidden = true,
             on_draw = function(cr, cw, ch)
                 local bg = T.bg_rgb
                 local bcg = T.bg_card_rgb
@@ -917,6 +919,7 @@ local function show_advanced_panel(conf, on_save)
             disable_q_close = true,
             title = "Avanzado",
             backing_store = 2,
+            initial_mask_hidden = true,
             on_draw = function(cr, cw, ch)
                 local bg  = T.bg_rgb
                 local bcg = T.bg_card_rgb
@@ -962,28 +965,36 @@ local function show_advanced_panel(conf, on_save)
 end
 
 -- ── PANEL ─────────────────────────────────────────────────────────
-local function close_panel(keep_alive)
-    if not panel_handle or not panel_handle:visible() then return end
+-- keep_alive: si false, srv:stop() al terminar el hide.
+-- on_hidden: corre cuando la animación de cierre terminó (o
+-- inmediatamente si el panel ya estaba oculto). El caller lo usa
+-- para disparar la captura recién cuando el panel ya no está en
+-- el framebuffer. Un timer fijo es un bug: la animación dura 260ms
+-- y cualquier valor menor deja el panel visible en la foto.
+local function close_panel(keep_alive, on_hidden)
+    if not panel_handle or not panel_handle:visible() then
+        if on_hidden then on_hidden() end
+        return
+    end
     xcb.ungrab_pointer(srv.conn)
     if panel_win and not panel_win.destroyed then
         pcall(function() panel_win:restore_input_focus() end)
     end
-    panel_handle:hide()
-    if state == "panel" then state = "idle" end
-    if not keep_alive then
-        log.info("screenshot", "panel cerrado, shutdown")
-        srv:stop()
-    end
+    panel_handle:hide(function()
+        if state == "panel" then state = "idle" end
+        if not keep_alive then
+            log.info("screenshot", "panel cerrado, shutdown")
+            srv:stop()
+        end
+        if on_hidden then on_hidden() end
+    end)
 end
 
 local function open_panel()
     local mod = require("tabs.screenshot")
 
     local function do_foto_mode(mode)
-        close_panel(true)
-        local tm
-        tm = srv:add_timer(80, function()
-            tm:cancel()
+        close_panel(true, function()
             do_foto(mode)
             state = "idle"
         end)
@@ -1005,10 +1016,7 @@ local function open_panel()
     end
 
     local function do_video_mode(mode, quality, custom_preset, custom_crf)
-        close_panel(true)
-        local tm
-        tm = srv:add_timer(80, function()
-            tm:cancel()
+        close_panel(true, function()
             do_video(mode, quality, custom_preset, custom_crf)
         end)
     end
@@ -1032,6 +1040,7 @@ local function open_panel()
             disable_q_close = true,
             title = "Screenshot",
             backing_store = 2,
+            initial_mask_hidden = true,
             on_draw = function(cr, cw, ch)
                 local bg = T.bg_rgb
                 local bcg = T.bg_card_rgb
